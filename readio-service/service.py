@@ -34,11 +34,11 @@ class Bridge:
     def __init__(self) -> None:
         self.settings: dict[str, Any] = {
             "engine": "kitten",
-            "target": None,
-            "voice": None,
+            "target": "KittenML/kitten-tts-mini-0.8",
+            "voice": "Jasper",
             "language": "en-US",
             "speaker": None,
-            "offline": True,
+            "offline": False,
             "max_chars": 8000,
         }
         self.readio = Readio()
@@ -122,7 +122,7 @@ class Bridge:
                     voice=_none(self.settings.get("voice")),
                     language=_none(self.settings.get("language")) or "en-US",
                     speaker=_speaker(self.settings.get("speaker")),
-                    offline=bool(self.settings.get("offline", True)),
+                    offline=bool(self.settings.get("offline", False)),
                 )
                 cancellation = CancellationToken()
                 with self._lock:
@@ -247,13 +247,14 @@ def handle(bridge: Bridge, message: Mapping[str, Any]) -> tuple[bool, Any]:
                 targets = bridge.readio.list_targets(
                     str(selected),
                     language=_none(bridge.settings.get("language")),
-                    offline=bool(bridge.settings.get("offline", True)),
+                    offline=bool(bridge.settings.get("offline", False)),
                 )
             except Exception as exc:
                 targets = {"error": str(exc)}
                 if isinstance(exc, ReadioError):
                     targets["error_info"] = jsonable(describe_error(exc))
         return True, {"engines": engines, "targets_for_selected_engine": targets}
+    if command == "shutdown":
         bridge.shutdown()
         return True, {"shutdown": True}
     raise ValueError(f"unknown command: {command}")

@@ -8,6 +8,9 @@ The MVP source was checked in the generation environment for:
 - JSON parsing of package, Tauri, and capability configuration
 - sidecar dependency-boundary check: no direct VoiceRender, sounddevice, or private `readio.speech` imports
 - Readio package metadata declaring `Apache-2.0`
+- release staging logic with fake Windows installer/sidecar outputs
+- frontend element IDs used by `src/main.js` are present in `src/index.html`
+- Python/JavaScript/JSON syntax checks after release-pipeline changes
 
 Not validated here:
 

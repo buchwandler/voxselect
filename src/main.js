@@ -10,11 +10,11 @@ import {
 
 const DEFAULTS = {
   engine: "kitten",
-  target: "",
-  voice: "",
+  target: "KittenML/kitten-tts-mini-0.8",
+  voice: "Jasper",
   language: "en-US",
   speaker: "",
-  offline: true,
+  offline: false,
   readHotkey: "CommandOrControl+Alt+Space",
   stopHotkey: "CommandOrControl+Alt+Escape",
   copyDelay: 140,

@@ -77,25 +77,35 @@ Open VoxSelect and set either:
 2. Engine + Target/model, optionally with a voice name.
 
 Press **Inspect engines** to see the engine metadata available in the frozen
-sidecar. Press **Test voice** before using the global shortcut.
+sidecar. Press **Test voice** before using the global shortcut. The release defaults to
+`KittenML/kitten-tts-mini-0.8` with the `Jasper` voice. On a fresh user profile, leave
+**Offline only** disabled for the first synthesis so the local model can be downloaded
+and cached; after that, offline mode can be enabled. Speech inference itself stays local.
 
 The default hotkeys are:
 
 - Read selected text: `CommandOrControl+Alt+Space`
 - Stop: `CommandOrControl+Alt+Escape`
 
-## Build an installer/package
+## Build release downloads
 
 ```bash
-npm install
-python scripts/build_release.py --engine-extra kitten
+npm ci
+python scripts/build_release.py --engine-extra kitten --clean
 ```
 
-Tauri places platform bundles under `src-tauri/target/release/bundle/`.
+The release script creates end-user artifacts under `release/`: native installers/packages,
+a portable folder, a portable ZIP, SHA-256 checksums, and `release-manifest.json`. End users
+do not need Python, Node.js, Rust, or a source checkout.
 
-Build on each target operating system rather than expecting one OS to create all
-three native packages. macOS public distribution additionally needs Apple code
-signing/notarization; Windows production releases should also be code-signed.
+Default outputs are NSIS + MSI on Windows, DMG on macOS, and DEB + AppImage on Linux.
+The portable package is a folder with the Windows executable and frozen Readio sidecar,
+a zipped `.app` on macOS, or an AppImage-based folder on Linux.
+
+Build on each target operating system rather than expecting one OS to create all three
+native packages. GitHub Actions does this automatically; tagged builds (`v*`) are also
+published as GitHub Releases. See `docs/RELEASING.md`. Public macOS releases still need
+code signing/notarization and Windows production releases should be code-signed.
 
 ## Linux and Wayland
 

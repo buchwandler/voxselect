@@ -230,3 +230,5 @@ build/
 src-tauri/binaries/voxselect-readio-service-*
 .DS_Store
 *.log
+
+release/
