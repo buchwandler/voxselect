@@ -24,11 +24,12 @@ Readio running in a bundled Python sidecar. No cloud TTS API is required.
 
 ## Important MVP limitation
 
-Readio's current semantic `speak` API is synchronous. VoxSelect therefore cannot
-abort a TTS model halfway through inference yet. Stop immediately stops audio and
-invalidates the current generation; if synthesis later finishes, the result is
-discarded. A future Readio resident speech-session/job API should own true model
-session reuse and cancellation.
+`Readio.synthesize()` is synchronous. Its `CancellationToken` is cooperative at
+workflow stage boundaries and does not interrupt VoiceRender inference already in
+progress. Stop immediately stops browser playback, cancels the active workflow token,
+and invalidates the generation. If inference is active, it runs to a stage boundary
+or completion, and VoxSelect discards the stale result. Queueing and playback remain
+application-owned.
 
 ## Prerequisites for developers
 
@@ -122,7 +123,7 @@ THIRD_PARTY.md            dependency licensing reminder
 ## Release checklist after the MVP
 
 - replace Copy simulation with native accessibility selection retrieval
-- add a Readio resident speech session/job API and remove stale-result workaround
+- consider engine-supported inference interruption or session reuse while retaining latest-generation safety
 - make engine/model/voice discovery fully interactive instead of free-text first
 - model download/install UI through Readio's public management API
 - streaming/chunked speech for long selections

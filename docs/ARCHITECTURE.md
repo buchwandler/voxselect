@@ -12,17 +12,18 @@
 
 2. **Frozen Python sidecar**
    - long-running JSONL process
-   - imports only Readio's public API for speech and engine discovery
+   - holds a persistent Readio instance and uses its public synthesis and normalized catalog API
    - converts selected text into a `SpeakRequest`
-   - calls `readio.api.speak(..., no_play=True)`
+   - calls `Readio.synthesize(..., cancellation=token)`
    - returns generated WAV bytes to the Tauri webview as base64
+   - serializes expected Readio failures through `describe_error()` as stable `ErrorInfo` records
 
 3. **Readio**
    - semantic plain-text planning
    - RenderProfile/voice resolution
    - VoiceRender preflight/rendering
    - AudioCompose output
-   - public engine discovery
+   - normalized public engine, target, voice, and option catalogs
 
 ## IPC protocol
 
@@ -39,10 +40,10 @@ Requests:
 - `shutdown`
 
 Speech synthesis is performed on a worker thread. New speech or Stop increments
-a generation counter. Readio synthesis is currently synchronous, so an active
-model inference is not forcibly interrupted. If that inference completes after
-Stop or a newer request, the stale result is discarded and never played.
-
+a generation counter and cancels the active token. Readio checks cancellation at
+workflow stage boundaries only. This does not interrupt an active VoiceRender
+inference. If inference completes after Stop or a newer request, the stale result
+is discarded and never played.
 ## Selection capture
 
 The global shortcut is registered by Tauri. When released, the UI writes a
@@ -62,14 +63,23 @@ This is an MVP fallback rather than the final accessibility integration:
 
 ## Readio API boundary
 
-The sidecar deliberately does not import `voicerender`, `utterplan`, or
-`audiocompose` directly. The public Readio surface used by the MVP is:
+The sidecar deliberately avoids direct imports of `voicerender`, `utterplan`, and
+`audiocompose`. It uses Readio's stable application API:
 
 ```python
-from readio.api import SpeakRequest, discover_engine_targets, list_engines, speak
+from readio.api import CancellationToken, Readio, SpeakRequest, describe_error
+
+service = Readio()
+token = CancellationToken()
+request = SpeakRequest(text="Selected text")
+result = service.synthesize(request, cancellation=token)
+wav_bytes = result.audio.to_wav_bytes()
+engines = service.list_engines()
+targets = service.list_targets(engines[0].id, language="en-US", offline=True)
 ```
 
-The next useful Readio API improvement for VoxSelect is a public resident speech
-session/job controller that owns model/session caching and explicit cancellation.
-When that exists, the bridge can switch without changing the desktop UI or IPC
-contract.
+The sidecar owns scheduling, text-length policy, transport, and browser playback.
+Synthesis returns audio in memory; Readio does not create a sidecar WAV file or
+play audio. `CancellationToken` provides cooperative stage-boundary cancellation,
+not interruption of a VoiceRender inference already running. Expected Readio errors
+are projected with `describe_error()` before they cross the JSONL boundary.

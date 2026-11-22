@@ -9,14 +9,13 @@ import json
 import os
 import queue
 import sys
-import tempfile
 import threading
 import traceback
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from readio.api import SpeakRequest, discover_engine_targets, list_engines, speak
+from readio.api import CancellationToken, Readio, ReadioError, SpeakRequest, describe_error
 
 try:
     from pynput.keyboard import Controller, Key
@@ -36,8 +35,10 @@ class Bridge:
             "offline": True,
             "max_chars": 8000,
         }
+        self.readio = Readio()
         self._generation = 0
         self._lock = threading.Lock()
+        self._cancellation: CancellationToken | None = None
         self._jobs: queue.Queue[tuple[int, str]] = queue.Queue(maxsize=1)
         self._shutdown = threading.Event()
         self._worker = threading.Thread(target=self._speech_worker, daemon=True)
@@ -51,6 +52,10 @@ class Bridge:
         with self._lock:
             self._generation += 1
             generation = self._generation
+            cancellation = self._cancellation
+            self._cancellation = None
+        if cancellation is not None:
+            cancellation.cancel()
         while True:
             try:
                 self._jobs.get_nowait()
@@ -58,7 +63,6 @@ class Bridge:
             except queue.Empty:
                 break
         return generation
-
     def configure(self, settings: Mapping[str, Any]) -> dict[str, Any]:
         allowed = {"engine", "target", "voice", "language", "speaker", "offline", "max_chars"}
         for key in allowed:
@@ -90,6 +94,7 @@ class Bridge:
                 generation, text = self._jobs.get(timeout=0.2)
             except queue.Empty:
                 continue
+            cancellation: CancellationToken | None = None
             try:
                 if generation != self.generation():
                     continue
@@ -102,43 +107,45 @@ class Bridge:
                     speaker=_speaker(self.settings.get("speaker")),
                     offline=bool(self.settings.get("offline", True)),
                 )
-                fd, temp_name = tempfile.mkstemp(prefix="voxselect-", suffix=".wav")
-                os.close(fd)
-                path = Path(temp_name)
-                path.unlink(missing_ok=True)  # Readio deliberately refuses output replacement.
-                try:
-                    result = speak(request, output=path, no_play=True)
-                    if generation != self.generation():
-                        emit({"event": "speech_canceled", "generation": generation})
+                cancellation = CancellationToken()
+                with self._lock:
+                    if generation != self._generation:
                         continue
-                    wav = base64.b64encode(path.read_bytes()).decode("ascii")
-                    emit(
-                        {
-                            "event": "audio",
-                            "generation": generation,
-                            "wav_base64": wav,
-                            "profile_id": result.profile_id,
-                            "warnings": list(result.warnings),
-                            "elapsed_seconds": result.elapsed_seconds,
-                            "sample_rate": result.audio.sample_rate,
-                            "channels": result.audio.channels,
-                        }
-                    )
-                finally:
-                    path.unlink(missing_ok=True)
+                    self._cancellation = cancellation
+                result = self.readio.synthesize(request, cancellation=cancellation)
+                if generation != self.generation():
+                    emit({"event": "speech_canceled", "generation": generation})
+                    continue
+                wav = base64.b64encode(result.audio.to_wav_bytes()).decode("ascii")
+                emit(
+                    {
+                        "event": "audio",
+                        "generation": generation,
+                        "wav_base64": wav,
+                        "profile_id": result.profile_id,
+                        "warnings": list(result.warnings),
+                        "elapsed_seconds": result.elapsed_seconds,
+                        "sample_rate": result.audio.sample_rate,
+                        "channels": result.audio.channels,
+                    }
+                )
             except Exception as exc:
                 if generation == self.generation():
-                    emit(
-                        {
-                            "event": "speech_error",
-                            "generation": generation,
-                            "message": str(exc),
-                            "type": type(exc).__name__,
-                        }
-                    )
+                    payload = {
+                        "event": "speech_error",
+                        "generation": generation,
+                        "message": str(exc),
+                        "type": type(exc).__name__,
+                    }
+                    if isinstance(exc, ReadioError):
+                        payload["error"] = jsonable(describe_error(exc))
+                    emit(payload)
             finally:
+                if cancellation is not None:
+                    with self._lock:
+                        if self._cancellation is cancellation:
+                            self._cancellation = None
                 self._jobs.task_done()
-
 
 def _none(value: Any) -> Any | None:
     if value is None:
@@ -214,20 +221,21 @@ def handle(bridge: Bridge, message: Mapping[str, Any]) -> tuple[bool, Any]:
     if command == "stop":
         return True, {"generation": bridge.stop()}
     if command == "engines":
-        engines = list_engines()
+        engines = bridge.readio.list_engines()
         selected = _none(bridge.settings.get("engine"))
         targets: Any = []
         if selected:
             try:
-                targets = discover_engine_targets(
+                targets = bridge.readio.list_targets(
                     str(selected),
                     language=_none(bridge.settings.get("language")),
                     offline=bool(bridge.settings.get("offline", True)),
                 )
             except Exception as exc:
                 targets = {"error": str(exc)}
+                if isinstance(exc, ReadioError):
+                    targets["error_info"] = jsonable(describe_error(exc))
         return True, {"engines": engines, "targets_for_selected_engine": targets}
-    if command == "shutdown":
         bridge.shutdown()
         return True, {"shutdown": True}
     raise ValueError(f"unknown command: {command}")
@@ -251,7 +259,10 @@ def main() -> int:
             if message.get("command") == "shutdown":
                 return 0
         except Exception as exc:
-            emit({"id": request_id, "ok": False, "error": str(exc), "type": type(exc).__name__})
+            error_payload = {"id": request_id, "ok": False, "error": str(exc), "type": type(exc).__name__}
+            if isinstance(exc, ReadioError):
+                error_payload["error_info"] = jsonable(describe_error(exc))
+            emit(error_payload)
             if os.environ.get("VOXSELECT_DEBUG"):
                 traceback.print_exc(file=sys.stderr)
     bridge.shutdown()
