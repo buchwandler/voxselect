@@ -513,7 +513,6 @@ def speak(
     ):
         raise ValueError("pass either a SpeakRequest or direct speak options, not both")
 
-
     result = speak_request(request, on_progress=on_progress, cancellation=cancellation)
     if output is not None:
         _write_speech_wav(result, output)

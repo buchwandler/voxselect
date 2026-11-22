@@ -301,7 +301,6 @@ class Readio:
             play_audio(result.audio.audio, result.audio.sample_rate)
         return result
 
-
     def list_engines(self) -> tuple[EngineInfo, ...]:
         """List engines as Readio-owned application catalog records."""
         from readio import engines as engine_api
@@ -366,11 +365,7 @@ class Readio:
                 offline=offline,
                 refresh=refresh,
             )
-            return tuple(
-                info
-                for item in voices
-                if (info := voice_info(item)) is not None
-            )
+            return tuple(info for item in voices if (info := voice_info(item)) is not None)
         except Exception as error:
             raise CatalogError(
                 f"Cannot list voices for {engine!r}:{target!r}: {error}",
@@ -402,6 +397,7 @@ class Readio:
                 target=target,
                 cause=error,
             ) from error
+
     def plan(
         self,
         workspace: WorkspaceRef | str | Path,

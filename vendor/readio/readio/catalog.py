@@ -57,9 +57,7 @@ def _capability_names(record: object) -> tuple[str, ...]:
 
 
 def _features(names: Iterable[str]) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(_FEATURE_LABELS.get(name, name.replace("_", " ")) for name in names)
-    )
+    return tuple(dict.fromkeys(_FEATURE_LABELS.get(name, name.replace("_", " ")) for name in names))
 
 
 def engine_info(engine: object) -> EngineInfo:
@@ -71,9 +69,7 @@ def engine_info(engine: object) -> EngineInfo:
     version = version_value if isinstance(version_value, str) else None
     features = [label for key, label in _ENGINE_FEATURES if bool(_value(engine, key, False))]
     features.extend(
-        label
-        for label in _features(_capability_names(engine))
-        if label not in features
+        label for label in _features(_capability_names(engine)) if label not in features
     )
     reason_value = _value(engine, "missing_dependency")
     reason = reason_value if isinstance(reason_value, str) else None
@@ -126,9 +122,7 @@ def target_info(target: object) -> TargetInfo:
         or bool(metadata.get("supports_reference_enrollment"))
         or bool(metadata.get("supports_voice_enrollment"))
     )
-    reference_only = (
-        requires_reference and not voices and not speakers and default_voice is None
-    )
+    reference_only = requires_reference and not voices and not speakers and default_voice is None
     status = _value(target, "status", "ready")
     sample_rate_value = _value(target, "sample_rate")
     sample_rate = (
@@ -176,12 +170,8 @@ def voice_info(voice: object) -> VoiceInfo | None:
     voice_metadata = metadata.get("voice")
     if not isinstance(voice_metadata, Mapping):
         voice_metadata = {}
-    language_label_value = _value(voice, "language_label") or voice_metadata.get(
-        "language_label"
-    )
-    language_label = (
-        language_label_value if isinstance(language_label_value, str) else None
-    )
+    language_label_value = _value(voice, "language_label") or voice_metadata.get("language_label")
+    language_label = language_label_value if isinstance(language_label_value, str) else None
     locale_value = _value(voice, "locale")
     locale = locale_value if isinstance(locale_value, str) else None
     gender_value = _value(voice, "gender")
@@ -194,10 +184,7 @@ def voice_info(voice: object) -> VoiceInfo | None:
     explicit_default = bool(_value(voice, "default", False))
     default = explicit_default or (
         isinstance(default_voice, str)
-        and (
-            identifier == default_voice
-            or _value(voice, "voice") == default_voice
-        )
+        and (identifier == default_voice or _value(voice, "voice") == default_voice)
     )
     installed = _value(voice, "installed", True)
     runtime_available = bool(_value(voice, "runtime_available", installed))

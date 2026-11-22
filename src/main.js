@@ -2,7 +2,11 @@ import { listen } from "@tauri-apps/api/event";
 import { Command } from "@tauri-apps/plugin-shell";
 import { register, unregisterAll } from "@tauri-apps/plugin-global-shortcut";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
+import {
+  enable as enableAutostart,
+  disable as disableAutostart,
+  isEnabled as isAutostartEnabled,
+} from "@tauri-apps/plugin-autostart";
 
 const DEFAULTS = {
   engine: "kitten",
@@ -15,7 +19,7 @@ const DEFAULTS = {
   stopHotkey: "CommandOrControl+Alt+Escape",
   copyDelay: 140,
   maxChars: 8000,
-  autostart: false
+  autostart: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -28,7 +32,10 @@ let currentAudioUrl = null;
 
 function loadSettings() {
   try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("voxselect.settings") || "{}") };
+    return {
+      ...DEFAULTS,
+      ...JSON.parse(localStorage.getItem("voxselect.settings") || "{}"),
+    };
   } catch {
     return { ...DEFAULTS };
   }
@@ -56,7 +63,7 @@ function formToSettings() {
     stopHotkey: $("stopHotkey").value.trim(),
     copyDelay: Number($("copyDelay").value || 140),
     maxChars: Number($("maxChars").value || 8000),
-    autostart: $("autostart").checked
+    autostart: $("autostart").checked,
   };
 }
 
@@ -116,7 +123,8 @@ function handleSidecarLine(line) {
     const { resolve, reject, timer } = pending.get(message.id);
     clearTimeout(timer);
     pending.delete(message.id);
-    if (message.ok === false) reject(new Error(message.error || "Sidecar request failed"));
+    if (message.ok === false)
+      reject(new Error(message.error || "Sidecar request failed"));
     else resolve(message.result ?? message);
   }
 }
@@ -145,8 +153,8 @@ async function configureSidecar() {
       language: settings.language || "en-US",
       speaker: settings.speaker || null,
       offline: Boolean(settings.offline),
-      max_chars: Number(settings.maxChars || DEFAULTS.maxChars)
-    }
+      max_chars: Number(settings.maxChars || DEFAULTS.maxChars),
+    },
   });
 }
 
@@ -176,12 +184,16 @@ async function playBase64Wav(base64) {
   const blob = base64ToBlob(base64, "audio/wav");
   currentAudioUrl = URL.createObjectURL(blob);
   currentAudio = new Audio(currentAudioUrl);
-  currentAudio.addEventListener("ended", () => {
-    if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
-    currentAudio = null;
-    currentAudioUrl = null;
-    setStatus("Ready", "ok");
-  }, { once: true });
+  currentAudio.addEventListener(
+    "ended",
+    () => {
+      if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
+      currentAudio = null;
+      currentAudioUrl = null;
+      setStatus("Ready", "ok");
+    },
+    { once: true }
+  );
   try {
     await currentAudio.play();
     setStatus("Speaking…", "ok");
@@ -198,7 +210,10 @@ async function speakText(text) {
   }
   const max = Number(settings.maxChars || DEFAULTS.maxChars);
   if (clean.length > max) {
-    setStatus(`Selection is ${clean.length} characters; limit is ${max}`, "error");
+    setStatus(
+      `Selection is ${clean.length} characters; limit is ${max}`,
+      "error"
+    );
     return;
   }
   stopPlayback();
@@ -208,10 +223,14 @@ async function speakText(text) {
 
 async function copyCurrentSelection() {
   const oldClipboard = await readText().catch(() => "");
-  const sentinel = `__VOXSELECT_${Date.now()}_${Math.random().toString(16).slice(2)}__`;
+  const sentinel = `__VOXSELECT_${Date.now()}_${Math.random()
+    .toString(16)
+    .slice(2)}__`;
   await writeText(sentinel);
   await request("copy_selection", {});
-  await new Promise((resolve) => setTimeout(resolve, Number(settings.copyDelay || 140)));
+  await new Promise((resolve) =>
+    setTimeout(resolve, Number(settings.copyDelay || 140))
+  );
   const selected = await readText().catch(() => sentinel);
   await writeText(oldClipboard || "").catch(() => {});
   if (!selected || selected === sentinel) return "";
@@ -290,7 +309,9 @@ async function inspectEngines() {
 async function init() {
   settingsToForm(settings);
   try {
-    $("autostart").checked = await isAutostartEnabled().catch(() => settings.autostart);
+    $("autostart").checked = await isAutostartEnabled().catch(
+      () => settings.autostart
+    );
     settings.autostart = $("autostart").checked;
     await startSidecar();
     await registerHotkeys();
@@ -301,7 +322,9 @@ async function init() {
 
   $("save").addEventListener("click", saveSettings);
   $("stop").addEventListener("click", () => stopPlayback());
-  $("speakManual").addEventListener("click", () => speakText($("manualText").value));
+  $("speakManual").addEventListener("click", () =>
+    speakText($("manualText").value)
+  );
   $("testVoice").addEventListener("click", async () => {
     settings = formToSettings();
     saveLocalSettings(settings);
@@ -317,7 +340,11 @@ async function init() {
 }
 
 window.addEventListener("beforeunload", () => {
-  try { child?.write(JSON.stringify({ id: "shutdown", command: "shutdown" }) + "\n"); } catch {}
+  try {
+    child?.write(
+      JSON.stringify({ id: "shutdown", command: "shutdown" }) + "\n"
+    );
+  } catch {}
 });
 
 init();

@@ -1,0 +1,30 @@
+[codecrate]
+output = "context_voxselect.md"
+keep_docstrings = true
+dedupe = true
+respect_gitignore = true
+exclude = ["*/.venv/*", "context_voxselect.*"]
+include = [
+  "**/*.py",
+  "**/*.toml",
+  "**/*.rst",
+  "**/*.md",
+  "**/*.ssmd",
+  "**/*.json",
+  "**/*.jsonl",
+  "**/*.ipynb",
+  "**/*.txt",
+  "**/*.yaml",
+  "**/*.yml",
+  "**/*.js",
+  "**/*.rs",
+  "**/py.typed",
+  ".gitignore",
+  "LICENSE*",
+  "MANIFEST.in",
+  "NOTICE*",
+]
+split_max_chars = 5000000
+layout = "full"
+profile = "portable-agent"
+emit_standalone_unpacker = true

@@ -105,7 +105,9 @@ def test_engines_command_uses_normalized_instance_catalog(bridge: Any) -> None:
     normalized = service.jsonable(payload)
     assert normalized["engines"][0]["id"] == "kitten"
     assert normalized["targets_for_selected_engine"][0]["id"] == "cpu"
-    assert fake_readio.target_calls == [("kitten", {"language": "en-US", "offline": True})]
+    assert fake_readio.target_calls == [
+        ("kitten", {"language": "en-US", "offline": True})
+    ]
 
 
 def test_speech_uses_in_memory_wav_and_passes_cancellation_token(bridge: Any) -> None:
@@ -125,7 +127,9 @@ def test_speech_uses_in_memory_wav_and_passes_cancellation_token(bridge: Any) ->
     assert audio_event["sample_rate"] == 24000
 
 
-def test_new_speech_cancels_inflight_generation_without_emitting_stale_error(bridge: Any) -> None:
+def test_new_speech_cancels_inflight_generation_without_emitting_stale_error(
+    bridge: Any,
+) -> None:
     instance, fake_readio, events, event_received = bridge
     first_entered = threading.Event()
 

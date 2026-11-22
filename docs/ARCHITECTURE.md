@@ -3,6 +3,7 @@
 ## Components
 
 1. **Tauri 2 desktop shell**
+
    - settings window
    - tray icon
    - global read/stop shortcuts
@@ -11,6 +12,7 @@
    - browser audio playback so Stop is immediate
 
 2. **Frozen Python sidecar**
+
    - long-running JSONL process
    - holds a persistent Readio instance and uses its public synthesis and normalized catalog API
    - converts selected text into a `SpeakRequest`
@@ -44,6 +46,7 @@ a generation counter and cancels the active token. Readio checks cancellation at
 workflow stage boundaries only. This does not interrupt an active VoiceRender
 inference. If inference completes after Stop or a newer request, the stale result
 is discarded and never played.
+
 ## Selection capture
 
 The global shortcut is registered by Tauri. When released, the UI writes a

@@ -15,7 +15,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from readio.api import CancellationToken, Readio, ReadioError, SpeakRequest, describe_error
+from readio.api import (
+    CancellationToken,
+    Readio,
+    ReadioError,
+    SpeakRequest,
+    describe_error,
+)
 
 try:
     from pynput.keyboard import Controller, Key
@@ -63,8 +69,17 @@ class Bridge:
             except queue.Empty:
                 break
         return generation
+
     def configure(self, settings: Mapping[str, Any]) -> dict[str, Any]:
-        allowed = {"engine", "target", "voice", "language", "speaker", "offline", "max_chars"}
+        allowed = {
+            "engine",
+            "target",
+            "voice",
+            "language",
+            "speaker",
+            "offline",
+            "max_chars",
+        }
         for key in allowed:
             if key in settings:
                 self.settings[key] = settings[key]
@@ -76,7 +91,9 @@ class Bridge:
             raise ValueError("text is empty")
         max_chars = int(self.settings.get("max_chars") or 8000)
         if len(text) > max_chars:
-            raise ValueError(f"text length {len(text)} exceeds configured limit {max_chars}")
+            raise ValueError(
+                f"text length {len(text)} exceeds configured limit {max_chars}"
+            )
         generation = self.invalidate()
         self._jobs.put_nowait((generation, text))
         return generation
@@ -146,6 +163,7 @@ class Bridge:
                         if self._cancellation is cancellation:
                             self._cancellation = None
                 self._jobs.task_done()
+
 
 def _none(value: Any) -> Any | None:
     if value is None:
@@ -259,7 +277,12 @@ def main() -> int:
             if message.get("command") == "shutdown":
                 return 0
         except Exception as exc:
-            error_payload = {"id": request_id, "ok": False, "error": str(exc), "type": type(exc).__name__}
+            error_payload = {
+                "id": request_id,
+                "ok": False,
+                "error": str(exc),
+                "type": type(exc).__name__,
+            }
             if isinstance(exc, ReadioError):
                 error_payload["error_info"] = jsonable(describe_error(exc))
             emit(error_payload)

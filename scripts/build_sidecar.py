@@ -27,7 +27,9 @@ def venv_python() -> Path:
 
 
 def rust_target() -> str:
-    result = subprocess.run(["rustc", "-vV"], check=True, text=True, capture_output=True)
+    result = subprocess.run(
+        ["rustc", "-vV"], check=True, text=True, capture_output=True
+    )
     for line in result.stdout.splitlines():
         if line.startswith("host: "):
             return line.split(":", 1)[1].strip()
@@ -35,7 +37,9 @@ def rust_target() -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build VoxSelect's frozen Readio sidecar")
+    parser = argparse.ArgumentParser(
+        description="Build VoxSelect's frozen Readio sidecar"
+    )
     parser.add_argument(
         "--engine-extra",
         default="kitten",
@@ -54,7 +58,15 @@ def main() -> int:
     readio_requirement = str(VENDOR)
     if args.engine_extra.lower() != "none":
         readio_requirement = f"{VENDOR}[{args.engine_extra}]"
-    run(py, "-m", "pip", "install", readio_requirement, "pynput>=1.7,<2", "pyinstaller>=6,<7")
+    run(
+        py,
+        "-m",
+        "pip",
+        "install",
+        readio_requirement,
+        "pynput>=1.7,<2",
+        "pyinstaller>=6,<7",
+    )
 
     work = ROOT / "build" / "sidecar"
     dist = ROOT / "build" / "sidecar-dist"
@@ -93,10 +105,17 @@ def main() -> int:
     ]
     run(*cmd)
 
-    source = dist / ("voxselect-readio-service.exe" if os.name == "nt" else "voxselect-readio-service")
+    source = dist / (
+        "voxselect-readio-service.exe"
+        if os.name == "nt"
+        else "voxselect-readio-service"
+    )
     target_triple = rust_target()
     BINARY_DIR.mkdir(parents=True, exist_ok=True)
-    destination = BINARY_DIR / f"voxselect-readio-service-{target_triple}{'.exe' if os.name == 'nt' else ''}"
+    destination = (
+        BINARY_DIR
+        / f"voxselect-readio-service-{target_triple}{'.exe' if os.name == 'nt' else ''}"
+    )
     shutil.copy2(source, destination)
     if os.name != "nt":
         destination.chmod(0o755)

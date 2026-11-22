@@ -291,7 +291,9 @@ class SpeakRequest:
         if self.profile is not None and any(
             value is not None for value in (self.engine, self.target, self.voice)
         ):
-            raise ValueError("profile is mutually exclusive with direct engine, target, and voice arguments")
+            raise ValueError(
+                "profile is mutually exclusive with direct engine, target, and voice arguments"
+            )
         if self.role is not None and self.profile is None:
             raise ValueError("--role requires --profile")
         object.__setattr__(self, "engine_options", MappingProxyType(dict(self.engine_options)))
@@ -309,7 +311,9 @@ class AudioBuffer:
             raise ValueError("sample_rate must be positive")
         audio = np.asarray(self.audio)
         if audio.ndim not in {1, 2} or (audio.ndim == 2 and audio.shape[1] <= 0):
-            raise ValueError("audio must be a one- or two-dimensional array with a valid channel dimension")
+            raise ValueError(
+                "audio must be a one- or two-dimensional array with a valid channel dimension"
+            )
         object.__setattr__(self, "audio", audio)
 
     @property
@@ -457,7 +461,6 @@ class CancellationToken:
     def raise_if_cancelled(self) -> None:
         if self.cancelled:
             raise WorkflowCancelledError()
-
 
 
 @dataclass(frozen=True, slots=True)
