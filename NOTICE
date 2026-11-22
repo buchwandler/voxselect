@@ -1,0 +1,11 @@
+VoxSelect
+Copyright 2026 VoxSelect contributors
+
+Licensed under the Apache License, Version 2.0.
+
+This source distribution contains a vendored snapshot of Readio for reproducible
+MVP builds. Readio declares Apache-2.0 in its package metadata and retains its
+own LICENSE in vendor/readio/LICENSE.
+
+Third-party packages and optional TTS engines retain their own licenses. See
+THIRD_PARTY.md and the dependency metadata produced by your final build.

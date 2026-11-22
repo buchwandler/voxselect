@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VoxSelect</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <div>
+          <p class="eyebrow">LOCAL TEXT TO SPEECH</p>
+          <h1>VoxSelect</h1>
+          <p class="lede">Highlight text anywhere, press a hotkey, and read it locally through Readio.</p>
+        </div>
+        <div id="status" class="status">Starting…</div>
+      </header>
+
+      <section class="card">
+        <h2>Voice</h2>
+        <div class="grid two">
+          <label>Engine
+            <input id="engine" placeholder="kitten" />
+          </label>
+          <label>Target / model
+            <input id="target" placeholder="model target id" />
+          </label>
+          <label class="span2">Voice selector
+            <input id="voice" placeholder="engine:target/voice (optional if engine + target are set)" />
+          </label>
+          <label>Language
+            <input id="language" value="en-US" />
+          </label>
+          <label>Speaker
+            <input id="speaker" placeholder="optional" />
+          </label>
+        </div>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="offline" checked /> Offline only</label>
+          <button id="discover">Inspect engines</button>
+          <button id="testVoice" class="primary">Test voice</button>
+        </div>
+        <pre id="engineInfo" class="info" hidden></pre>
+      </section>
+
+      <section class="card">
+        <h2>Hotkeys</h2>
+        <div class="grid two">
+          <label>Read selection
+            <input id="readHotkey" value="CommandOrControl+Alt+Space" />
+          </label>
+          <label>Stop
+            <input id="stopHotkey" value="CommandOrControl+Alt+Escape" />
+          </label>
+          <label>Copy delay (ms)
+            <input id="copyDelay" type="number" min="40" max="1000" value="140" />
+          </label>
+          <label>Maximum selected characters
+            <input id="maxChars" type="number" min="100" max="50000" value="8000" />
+          </label>
+        </div>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="autostart" /> Start VoxSelect at login</label>
+          <button id="save" class="primary">Save settings</button>
+        </div>
+      </section>
+
+      <section class="card compact">
+        <h2>Manual test</h2>
+        <textarea id="manualText" rows="4" placeholder="Paste text here to test speech without using a global selection."></textarea>
+        <div class="row">
+          <button id="speakManual">Speak</button>
+          <button id="stop">Stop</button>
+        </div>
+      </section>
+
+      <footer>
+        VoxSelect 0.1.0 · Apache-2.0 · Speech stays local after models are installed.
+      </footer>
+    </main>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
