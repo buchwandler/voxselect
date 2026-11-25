@@ -4,22 +4,6 @@
   "description": "VoxSelect desktop permissions",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "global-shortcut:default",
-    "autostart:default",
-    "clipboard-manager:allow-read-text",
-    "clipboard-manager:allow-write-text",
-    {
-      "identifier": "shell:allow-spawn",
-      "allow": [
-        { "name": "binaries/voxselect-readio-service", "sidecar": true }
-      ]
-    },
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [
-        { "name": "binaries/voxselect-readio-service", "sidecar": true }
-      ]
-    }
+    "core:default"
   ]
 }

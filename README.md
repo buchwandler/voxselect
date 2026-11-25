@@ -1,143 +1,68 @@
-# VoxSelect MVP
+# VoxSelect
 
-VoxSelect is a small cross-platform tray utility for reading selected text aloud
-locally. Highlight text, press a global hotkey, and VoxSelect sends the text to
-Readio running in a bundled Python sidecar. No cloud TTS API is required.
+VoxSelect is a cross-platform Tauri tray application for reading selected or copied text aloud with local speech synthesis. It uses a bundled Python sidecar with Readio 0.6.8. No cloud TTS API is required. On first use, the selected engine may download model weights to the local user cache when Offline only is disabled.
 
-**License:** Apache-2.0
+## Runtime behavior
 
-## What is in this MVP
+The webview owns presentation only. It calls narrow Tauri commands and listens for events. Rust owns the sidecar process, JSONL request routing, clipboard access, global shortcuts, autostart, and shutdown. The sidecar uses Readio's public synthesis, capability, diagnostic, and engine/target/voice catalog APIs.
 
-- Tauri 2 desktop application for Windows, macOS, and Linux
-- tray icon and settings window
-- global Read Selection and Stop shortcuts
-- Read Clipboard tray fallback
-- voice/engine/target/language fields
-- offline mode
-- start-at-login setting
-- persistent Python sidecar process
-- current Readio source snapshot vendored for reproducible builds
-- PyInstaller sidecar build script
-- Tauri installer/package build script
-- latest-request-wins semantics: stale synthesis output is discarded
-- immediate stop of already-playing audio
+Engine, target, and voice are selected from runtime catalogs. The UI does not report speech readiness until Readio reports a runnable engine and valid selections. Playback remains in the webview. Stop halts current playback immediately and invalidates the current generation. Readio cancellation is cooperative, so an active VoiceRender inference may continue until a stage boundary or completion; VoxSelect discards stale results.
 
-## Important MVP limitation
+## Developer setup
 
-`Readio.synthesize()` is synchronous. Its `CancellationToken` is cooperative at
-workflow stage boundaries and does not interrupt VoiceRender inference already in
-progress. Stop immediately stops browser playback, cancels the active workflow token,
-and invalidates the generation. If inference is active, it runs to a stage boundary
-or completion, and VoxSelect discards the stale result. Queueing and playback remain
-application-owned.
+Requirements:
 
-## Prerequisites for developers
+- Python 3.11 or newer
+- Node.js 22
+- Rust stable and Cargo
+- Tauri prerequisites for the current operating system
 
-The developer/build machine needs:
-
-- Python 3.10+
-- Node.js 20+
-- Rust stable / Cargo
-- normal Tauri OS build prerequisites
-
-End users of a built installer do **not** need Python, Node, or Rust.
-
-## First run
-
-```bash
-npm install
-python scripts/build_sidecar.py --engine-extra kitten
-npm run tauri:dev
-```
-
-Or:
-
-```bash
-python scripts/dev.py --engine-extra kitten
-```
-
-The sidecar script creates its own `.venv-sidecar`, installs the vendored Readio
-snapshot plus the requested engine extra, freezes the bridge with PyInstaller,
-and copies it to the target-triple filename Tauri expects.
-
-To build without an engine extra:
-
-```bash
-python scripts/build_sidecar.py --engine-extra none
-```
-
-You can substitute another Readio extra such as `kokoro`, `pocket`, `piper`, or
-`supertonic` if its dependencies and license fit your release.
-
-## Configure a voice
-
-Open VoxSelect and set either:
-
-1. a fully-qualified Readio/VoiceRender voice selector, **or**
-2. Engine + Target/model, optionally with a voice name.
-
-Press **Inspect engines** to see the engine metadata available in the frozen
-sidecar. Press **Test voice** before using the global shortcut. The release defaults to
-`KittenML/kitten-tts-mini-0.8` with the `Jasper` voice. On a fresh user profile, leave
-**Offline only** disabled for the first synthesis so the local model can be downloaded
-and cached; after that, offline mode can be enabled. Speech inference itself stays local.
-
-The default hotkeys are:
-
-- Read selected text: `CommandOrControl+Alt+Space`
-- Stop: `CommandOrControl+Alt+Escape`
-
-## Build release downloads
+Install frontend dependencies and build the target sidecar:
 
 ```bash
 npm ci
+python scripts/build_sidecar.py --engine-extra kitten
+python scripts/smoke_sidecar.py
+npm run tauri:dev
+```
+
+Alternatively, `python scripts/dev.py --engine-extra kitten` builds the sidecar and starts Tauri development mode. The sidecar build creates `.venv-sidecar`, installs the vendored Readio snapshot and selected engine extra, freezes the service for the current Rust target, and writes a target-specific constraints file and version manifest under `src-tauri/binaries/`. Existing generated constraints are reused on later builds. Pass `--constraints PATH` to use a supplied constraints artifact or `--recreate-venv` to recreate the build environment.
+
+The exact-target smoke verifies the manifest's binary and constraints hashes, protocol-v2 ready handshake, ping, capabilities, catalogs, and shutdown. It reports unavailable runners or optional engine catalog queries as skips. The scheduled/manual real-engine workflow is stricter and fails if the engine cannot synthesize a valid non-silent WAV.
+
+## Speech settings and diagnostics
+
+Use the engine, target, and voice selectors to choose values exposed by the running Readio sidecar. Leave Offline only disabled for the first synthesis if model weights are not cached. Use Test voice before relying on the global Read Selection shortcut.
+
+Refresh backend diagnostics to inspect Readio capabilities, service/runtime versions, platform, and selected engine identifiers. Rust writes bounded logs to the application data directory as `voxselect.log`, rotating an oversized file to `voxselect.log.1`. Logs omit selected text and WAV payloads.
+
+## Selection and platform limitations
+
+Selection capture uses the sidecar to send a synthetic Copy keystroke. Rust temporarily replaces the clipboard contents, reads the resulting plain text, and restores the previous plain-text value. Non-text clipboard formats are not preserved. Apps that block synthetic Copy, have no selection, or do not expose plain text may fail. Read clipboard is the fallback for text already copied.
+
+On macOS, synthetic keyboard input may require Accessibility permission. Global shortcuts depend on operating-system permissions. Wayland compositors may block input injection, so selection capture and hotkeys vary by compositor. VoxSelect does not yet use desktop portals or native accessibility APIs for retrieving selections. Screen-reader, high-contrast, and formal platform accessibility audits remain outstanding.
+
+## Tests and validation
+
+```bash
+python -m pytest -q
+node --test tests/*.test.js
+npm run build
+cargo test --manifest-path src-tauri/Cargo.toml
+```
+
+The release workflow runs these checks before artifact builds. Its Windows, macOS, and Linux build matrix freezes and smoke-tests each platform's exact target sidecar. See [VALIDATION.md](VALIDATION.md) for current evidence and the physical-device checklist.
+
+## Release builds
+
+Build native packages on the matching operating system:
+
+```bash
 python scripts/build_release.py --engine-extra kitten --clean
 ```
 
-The release script creates end-user artifacts under `release/`: native installers/packages,
-a portable folder, a portable ZIP, SHA-256 checksums, and `release-manifest.json`. End users
-do not need Python, Node.js, Rust, or a source checkout.
+Outputs are staged under `release/`, including installers/packages, a portable ZIP, checksums, the sidecar dependency constraints and version manifest, and `release-manifest.json`. End users do not need Python, Node.js, Rust, or a source checkout. See [docs/RELEASING.md](docs/RELEASING.md).
 
-Default outputs are NSIS + MSI on Windows, DMG on macOS, and DEB + AppImage on Linux.
-The portable package is a folder with the Windows executable and frozen Readio sidecar,
-a zipped `.app` on macOS, or an AppImage-based folder on Linux.
+## Architecture
 
-Build on each target operating system rather than expecting one OS to create all three
-native packages. GitHub Actions does this automatically; tagged builds (`v*`) are also
-published as GitHub Releases. See `docs/RELEASING.md`. Public macOS releases still need
-code signing/notarization and Windows production releases should be code-signed.
-
-## Linux and Wayland
-
-The MVP selection method synthesizes Copy with `pynput`. It is expected to work
-best on Windows, macOS (with Accessibility permission when required), and X11.
-Wayland intentionally restricts global input injection, so selection capture can
-fail depending on compositor/session. Use **Read clipboard** as the MVP fallback.
-A production Linux implementation should use portal/accessibility mechanisms
-where available.
-
-## Source layout
-
-```text
-src/                     Vite settings UI and desktop-side orchestration
-src-tauri/               Tauri/Rust shell and tray
-readio-service/           Python JSONL sidecar
-scripts/                  sidecar/dev/release build helpers
-vendor/readio/            supplied Readio source snapshot
-docs/ARCHITECTURE.md      component and API-boundary notes
-LICENSE                   Apache License 2.0 for VoxSelect
-NOTICE                    project notice
-THIRD_PARTY.md            dependency licensing reminder
-```
-
-## Release checklist after the MVP
-
-- replace Copy simulation with native accessibility selection retrieval
-- consider engine-supported inference interruption or session reuse while retaining latest-generation safety
-- make engine/model/voice discovery fully interactive instead of free-text first
-- model download/install UI through Readio's public management API
-- streaming/chunked speech for long selections
-- persistent structured config instead of localStorage
-- signed auto-updates
-- SBOM and automated third-party license report
-- Windows/macOS/Linux CI smoke tests and real TTS E2E tests
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for process ownership, protocol, privacy, and cancellation details. HTTP audio endpoints and streaming remain deferred until measurements show they are needed.

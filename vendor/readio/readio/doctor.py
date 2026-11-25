@@ -5,13 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
 from enum import Enum
-from importlib import metadata
+from importlib import metadata  # noqa: F401
 from pathlib import Path
 from typing import Any
 
 import voicerender  # type: ignore[import-not-found]
 
 from . import __version__
+from ._packages import distribution_version
 from .runtime import runtime_status
 
 SPECIALIST_PACKAGES = (
@@ -85,10 +86,7 @@ def _format_runtime_section(runtime: Mapping[str, Any]) -> list[str]:
 def doctor_report() -> dict[str, Any]:
     packages: dict[str, str] = {}
     for name in SPECIALIST_PACKAGES:
-        try:
-            packages[name] = metadata.version(name)
-        except metadata.PackageNotFoundError:
-            packages[name] = "not installed"
+        packages[name] = distribution_version(name) or "not installed"
     engines = []
     for engine in voicerender.list_engines():
         engine_id = str(engine["id"])

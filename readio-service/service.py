@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistent JSONL bridge from VoxSelect to Readio's public Python API."""
+"""Persistent, versioned JSONL bridge from VoxSelect to Readio's public API."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import threading
 import traceback
 from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from readio.api import (
@@ -21,6 +22,7 @@ from readio.api import (
     ReadioError,
     SpeakRequest,
     describe_error,
+    serialize_public,
 )
 
 try:
@@ -28,6 +30,14 @@ try:
 except Exception:  # frozen builds can still report a clean runtime error
     Controller = None  # type: ignore[assignment]
     Key = None  # type: ignore[assignment]
+
+
+PROTOCOL = 2
+SERVICE_NAME = "voxselect-readio-service"
+SERVICE_VERSION = "0.2.0"
+_OUTPUT_LOCK = threading.Lock()
+
+
 
 
 class Bridge:
@@ -45,7 +55,7 @@ class Bridge:
         self._generation = 0
         self._lock = threading.Lock()
         self._cancellation: CancellationToken | None = None
-        self._jobs: queue.Queue[tuple[int, str]] = queue.Queue(maxsize=1)
+        self._jobs: queue.Queue[tuple[int, str, Mapping[str, Any]]] = queue.Queue(maxsize=1)
         self._shutdown = threading.Event()
         self._worker = threading.Thread(target=self._speech_worker, daemon=True)
         self._worker.start()
@@ -54,20 +64,47 @@ class Bridge:
         with self._lock:
             return self._generation
 
+    def settings_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self.settings)
+
+
+
+    def diagnostics(self) -> dict[str, Any]:
+        settings = self.settings_snapshot()
+        return {
+            "schema": "voxselect.diagnostics.v1",
+            "result": {
+                "service": {
+                    "name": SERVICE_NAME,
+                    "version": SERVICE_VERSION,
+                    "protocol": PROTOCOL,
+                },
+                "platform": sys.platform,
+                "readio": serialize_public(self.readio.capabilities()),
+                "selection": {
+                    key: _none(settings.get(key)) for key in ("engine", "target", "voice")
+                },
+            },
+        }
+
+    def _discard_queued_locked(self) -> None:
+        while True:
+            try:
+                self._jobs.get_nowait()
+                self._jobs.task_done()
+            except queue.Empty:
+                return
+
     def invalidate(self) -> int:
         with self._lock:
             self._generation += 1
             generation = self._generation
             cancellation = self._cancellation
             self._cancellation = None
+            self._discard_queued_locked()
         if cancellation is not None:
             cancellation.cancel()
-        while True:
-            try:
-                self._jobs.get_nowait()
-                self._jobs.task_done()
-            except queue.Empty:
-                break
         return generation
 
     def configure(self, settings: Mapping[str, Any]) -> dict[str, Any]:
@@ -80,22 +117,31 @@ class Bridge:
             "offline",
             "max_chars",
         }
-        for key in allowed:
-            if key in settings:
-                self.settings[key] = settings[key]
-        return dict(self.settings)
+        with self._lock:
+            for key in allowed:
+                if key in settings:
+                    self.settings[key] = settings[key]
+            return dict(self.settings)
 
     def queue_speech(self, text: str) -> int:
         text = text.strip()
         if not text:
             raise ValueError("text is empty")
-        max_chars = int(self.settings.get("max_chars") or 8000)
-        if len(text) > max_chars:
-            raise ValueError(
-                f"text length {len(text)} exceeds configured limit {max_chars}"
-            )
-        generation = self.invalidate()
-        self._jobs.put_nowait((generation, text))
+        with self._lock:
+            settings = MappingProxyType(dict(self.settings))
+            max_chars = int(settings.get("max_chars") or 8000)
+            if len(text) > max_chars:
+                raise ValueError(
+                    f"text length {len(text)} exceeds configured limit {max_chars}"
+                )
+            self._generation += 1
+            generation = self._generation
+            cancellation = self._cancellation
+            self._cancellation = None
+            self._discard_queued_locked()
+            self._jobs.put_nowait((generation, text, settings))
+        if cancellation is not None:
+            cancellation.cancel()
         return generation
 
     def stop(self) -> int:
@@ -108,36 +154,34 @@ class Bridge:
     def _speech_worker(self) -> None:
         while not self._shutdown.is_set():
             try:
-                generation, text = self._jobs.get(timeout=0.2)
+                job = self._jobs.get(timeout=0.2)
             except queue.Empty:
                 continue
             cancellation: CancellationToken | None = None
             try:
-                if generation != self.generation():
-                    continue
-                request = SpeakRequest(
-                    text=text,
-                    engine=_none(self.settings.get("engine")),
-                    target=_none(self.settings.get("target")),
-                    voice=_none(self.settings.get("voice")),
-                    language=_none(self.settings.get("language")) or "en-US",
-                    speaker=_speaker(self.settings.get("speaker")),
-                    offline=bool(self.settings.get("offline", False)),
-                )
+                job_generation, text, settings = job
                 cancellation = CancellationToken()
                 with self._lock:
-                    if generation != self._generation:
+                    if job_generation != self._generation:
                         continue
                     self._cancellation = cancellation
+                request = SpeakRequest(
+                    text=text,
+                    engine=_none(settings.get("engine")),
+                    target=_none(settings.get("target")),
+                    voice=_none(settings.get("voice")),
+                    language=_none(settings.get("language")) or "en-US",
+                    speaker=_speaker(settings.get("speaker")),
+                    offline=bool(settings.get("offline", False)),
+                )
                 result = self.readio.synthesize(request, cancellation=cancellation)
-                if generation != self.generation():
-                    emit({"event": "speech_canceled", "generation": generation})
+                if job_generation != self.generation():
                     continue
                 wav = base64.b64encode(result.audio.to_wav_bytes()).decode("ascii")
                 emit(
                     {
                         "event": "audio",
-                        "generation": generation,
+                        "generation": job_generation,
                         "wav_base64": wav,
                         "profile_id": result.profile_id,
                         "warnings": list(result.warnings),
@@ -147,16 +191,16 @@ class Bridge:
                     }
                 )
             except Exception as exc:
-                if generation == self.generation():
-                    payload = {
-                        "event": "speech_error",
-                        "generation": generation,
-                        "message": str(exc),
-                        "type": type(exc).__name__,
-                    }
-                    if isinstance(exc, ReadioError):
-                        payload["error"] = jsonable(describe_error(exc))
-                    emit(payload)
+                if job_generation == self.generation():
+                    emit(
+                        {
+                            "event": "speech_error",
+                            "generation": job_generation,
+                            "message": str(exc),
+                            "type": type(exc).__name__,
+                            "error": _error_info(exc),
+                        }
+                    )
             finally:
                 if cancellation is not None:
                     with self._lock:
@@ -186,6 +230,29 @@ def _speaker(value: Any) -> str | int | None:
         return text
 
 
+def _identifier(params: Mapping[str, Any], name: str) -> str:
+    value = params.get(name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} is required")
+    return value.strip()
+
+
+def _optional_string(params: Mapping[str, Any], name: str) -> str | None:
+    value = params.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string or null")
+    return value.strip() or None
+
+
+def _boolean(params: Mapping[str, Any], name: str, *, default: bool) -> bool:
+    value = params.get(name, default)
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean")
+    return value
+
+
 def jsonable(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -194,9 +261,9 @@ def jsonable(value: Any) -> Any:
     if dataclasses.is_dataclass(value):
         return jsonable(dataclasses.asdict(value))
     if isinstance(value, Mapping):
-        return {str(k): jsonable(v) for k, v in value.items()}
+        return {str(key): jsonable(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set)):
-        return [jsonable(v) for v in value]
+        return [jsonable(item) for item in value]
     to_dict = getattr(value, "to_dict", None)
     if callable(to_dict):
         try:
@@ -206,9 +273,29 @@ def jsonable(value: Any) -> Any:
     return str(value)
 
 
+def _error_info(error: Exception) -> dict[str, Any]:
+    if isinstance(error, ReadioError):
+        value = jsonable(describe_error(error))
+        result = dict(value) if isinstance(value, Mapping) else {}
+    else:
+        result = {}
+    result.setdefault("type", type(error).__name__)
+    result.setdefault("message", str(error))
+    result.setdefault("code", None)
+    result.setdefault("stage", None)
+    result.setdefault("package", None)
+    result.setdefault("selector", None)
+    result.setdefault("details", {})
+    result.setdefault("recoverable", False)
+    result.setdefault("suggested_action", None)
+    return {"schema": "readio.error-info.v1", "result": result}
+
+
 def emit(payload: Mapping[str, Any]) -> None:
-    sys.stdout.write(json.dumps(jsonable(payload), ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    message = {**payload, "protocol": PROTOCOL}
+    with _OUTPUT_LOCK:
+        sys.stdout.write(json.dumps(jsonable(message), ensure_ascii=False) + "\n")
+        sys.stdout.flush()
 
 
 def simulate_copy() -> None:
@@ -222,11 +309,19 @@ def simulate_copy() -> None:
 
 
 def handle(bridge: Bridge, message: Mapping[str, Any]) -> tuple[bool, Any]:
+    if message.get("protocol") != PROTOCOL:
+        raise ValueError(
+            f"unsupported request protocol {message.get('protocol')!r}; expected {PROTOCOL}"
+        )
     command = str(message.get("command") or "")
+    params = message.get("params") or {}
+    if not isinstance(params, Mapping):
+        raise ValueError("request params must be an object")
+
     if command == "ping":
-        return True, {"service": "voxselect-readio-service", "protocol": 1}
+        return True, {"service": SERVICE_NAME, "protocol": PROTOCOL}
     if command == "configure":
-        settings = message.get("settings")
+        settings = params.get("settings")
         if not isinstance(settings, Mapping):
             raise ValueError("configure requires a settings object")
         return True, bridge.configure(settings)
@@ -234,26 +329,68 @@ def handle(bridge: Bridge, message: Mapping[str, Any]) -> tuple[bool, Any]:
         simulate_copy()
         return True, {"copied": True}
     if command == "speak":
-        generation = bridge.queue_speech(str(message.get("text") or ""))
+        generation = bridge.queue_speech(str(params.get("text") or ""))
         return True, {"accepted": True, "generation": generation}
     if command == "stop":
         return True, {"generation": bridge.stop()}
+    if command == "capabilities":
+        return True, serialize_public(bridge.readio.capabilities())
+    if command == "synthesis_capabilities":
+        return True, serialize_public(bridge.readio.synthesis_capabilities())
+    if command == "diagnostics":
+        return True, bridge.diagnostics()
     if command == "engines":
+        settings = bridge.settings_snapshot()
         engines = bridge.readio.list_engines()
-        selected = _none(bridge.settings.get("engine"))
+        selected = _none(settings.get("engine"))
         targets: Any = []
         if selected:
             try:
                 targets = bridge.readio.list_targets(
                     str(selected),
-                    language=_none(bridge.settings.get("language")),
-                    offline=bool(bridge.settings.get("offline", False)),
+                    language=_none(settings.get("language")),
+                    offline=True,
                 )
             except Exception as exc:
                 targets = {"error": str(exc)}
                 if isinstance(exc, ReadioError):
-                    targets["error_info"] = jsonable(describe_error(exc))
-        return True, {"engines": engines, "targets_for_selected_engine": targets}
+                    targets["error_info"] = serialize_public(describe_error(exc))
+        return True, {
+            "schema": "voxselect.engine-catalog.v1",
+            "engines": serialize_public(engines),
+            "selected_engine": selected,
+            "targets_for_selected_engine": serialize_public(targets),
+        }
+    if command == "targets":
+        engine = _identifier(params, "engine")
+        targets = bridge.readio.list_targets(
+            engine,
+            language=_optional_string(params, "language"),
+            offline=_boolean(params, "offline", default=True),
+            refresh=_boolean(params, "refresh", default=False),
+        )
+        return True, {
+            "schema": "voxselect.target-catalog.v1",
+            "result": {"engine": engine, "items": serialize_public(targets)},
+        }
+    if command == "voices":
+        engine = _identifier(params, "engine")
+        target = _identifier(params, "target")
+        voices = bridge.readio.list_voices(
+            engine=engine,
+            target=target,
+            language=_optional_string(params, "language"),
+            offline=_boolean(params, "offline", default=True),
+            refresh=_boolean(params, "refresh", default=False),
+        )
+        return True, {
+            "schema": "voxselect.voice-catalog.v1",
+            "result": {
+                "engine": engine,
+                "target": target,
+                "items": serialize_public(voices),
+            },
+        }
     if command == "shutdown":
         bridge.shutdown()
         return True, {"shutdown": True}
@@ -262,7 +399,13 @@ def handle(bridge: Bridge, message: Mapping[str, Any]) -> tuple[bool, Any]:
 
 def main() -> int:
     bridge = Bridge()
-    emit({"event": "ready", "protocol": 1})
+    emit(
+        {
+            "event": "ready",
+            "service": SERVICE_NAME,
+            "service_version": SERVICE_VERSION,
+        }
+    )
     for raw in sys.stdin:
         raw = raw.strip()
         if not raw:
@@ -278,15 +421,13 @@ def main() -> int:
             if message.get("command") == "shutdown":
                 return 0
         except Exception as exc:
-            error_payload = {
-                "id": request_id,
-                "ok": False,
-                "error": str(exc),
-                "type": type(exc).__name__,
-            }
-            if isinstance(exc, ReadioError):
-                error_payload["error_info"] = jsonable(describe_error(exc))
-            emit(error_payload)
+            emit(
+                {
+                    "id": request_id,
+                    "ok": False,
+                    "error": _error_info(exc),
+                }
+            )
             if os.environ.get("VOXSELECT_DEBUG"):
                 traceback.print_exc(file=sys.stderr)
     bridge.shutdown()

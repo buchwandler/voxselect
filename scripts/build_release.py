@@ -13,6 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TAURI_DIR = ROOT / "src-tauri"
+SIDECAR_BINARIES = TAURI_DIR / "binaries"
 CONFIG_PATH = TAURI_DIR / "tauri.conf.json"
 RELEASE_DIR = ROOT / "release"
 TARGET_RELEASE = TAURI_DIR / "target" / "release"
@@ -273,6 +274,19 @@ def write_checksums(downloads: Path, records: list[dict], platform_id: str) -> d
     }
 
 
+def stage_sidecar_metadata(
+    *, system: str, target: str, engine_extra: str, downloads: Path
+) -> list[dict]:
+    suffix = ".exe" if system == "windows" else ""
+    target_name = f"voxselect-readio-service-{target}"
+    manifest = SIDECAR_BINARIES / f"{target_name}{suffix}.manifest.json"
+    constraints = SIDECAR_BINARIES / f"{target_name}-{engine_extra.lower()}.constraints.txt"
+    return [
+        copy_download(manifest, downloads / manifest.name),
+        copy_download(constraints, downloads / constraints.name),
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Build and stage VoxSelect installers plus a portable end-user package"
@@ -318,6 +332,8 @@ def main() -> int:
             sidecar_cmd.append("--recreate-venv")
         run(*sidecar_cmd)
 
+    run(sys.executable, str(ROOT / "scripts" / "smoke_sidecar.py"))
+
     if not args.skip_build:
         if not shutil.which("npm"):
             raise RuntimeError("npm is required on the build machine")
@@ -349,6 +365,13 @@ def main() -> int:
             portable_root=portable_root,
         )
     )
+    sidecar_records = stage_sidecar_metadata(
+        system=system,
+        target=target,
+        engine_extra=args.engine_extra,
+        downloads=downloads,
+    )
+    records.extend(sidecar_records)
     checksum_record = write_checksums(
         downloads, records, f"{version}-{system}-{arch}"
     )
@@ -364,6 +387,10 @@ def main() -> int:
         "portable_folder": str(
             portable_root / f"VoxSelect-{version}-{system}-{arch}-portable"
         ),
+        "sidecar": {
+            "version_manifest": sidecar_records[0]["file"],
+            "constraints": sidecar_records[1]["file"],
+        },
     }
     manifest_path = RELEASE_DIR / "release-manifest.json"
     manifest_path.write_text(

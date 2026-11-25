@@ -1,0 +1,45 @@
+name: real-engine-smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux audio dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      - name: Build frozen sidecar with the Kitten engine extra
+        run: python scripts/build_sidecar.py --engine-extra kitten
+
+      - name: Synthesize and validate a non-silent WAV
+        run: >-
+          python scripts/smoke_real_engine.py
+          --engine kitten
+          --timeout 1200
+          --output build/real-engine-smoke.wav
+
+      - name: Upload generated WAV
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-engine-smoke-wav
+          path: build/real-engine-smoke.wav
+          if-no-files-found: error

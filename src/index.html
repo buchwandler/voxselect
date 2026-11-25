@@ -18,18 +18,23 @@
       <section class="card">
         <h2>Voice</h2>
         <div class="grid">
-          <label>Engine<input id="engine" placeholder="kitten" /></label>
-          <label>Target / model<input id="target" placeholder="optional" /></label>
-          <label>Voice selector<input id="voice" placeholder="optional" /></label>
-          <label>Language<input id="language" placeholder="en-US" /></label>
+          <label>Engine<select id="engine" disabled></select></label>
+          <label>Target / model<select id="target" disabled></select></label>
+          <label>Voice<select id="voice" disabled></select></label>
+          <label>Language<select id="language" disabled></select></label>
           <label>Speaker<input id="speaker" placeholder="optional" /></label>
           <label class="check"><input id="offline" type="checkbox" /> Offline only (model must already be cached)</label>
         </div>
         <div class="actions">
-          <button id="testVoice">Test voice</button>
-          <button id="discover" class="secondary">Inspect engines</button>
+          <button id="testVoice" disabled>Test voice</button>
+          <button id="discover" class="secondary">Refresh catalogs</button>
         </div>
         <pre id="engineInfo" hidden></pre>
+        <pre id="playbackInfo" hidden></pre>
+        <div class="actions">
+          <button id="refreshDiagnostics" class="secondary">Refresh backend diagnostics</button>
+        </div>
+        <pre id="diagnosticsInfo" hidden aria-label="Backend diagnostics" aria-live="polite"></pre>
       </section>
 
       <section class="card">
@@ -41,16 +46,16 @@
           <label>Maximum characters<input id="maxChars" type="number" min="1" max="100000" /></label>
           <label class="check"><input id="autostart" type="checkbox" /> Start at login</label>
         </div>
-        <div class="actions"><button id="save">Save settings</button><button id="stop" class="danger">Stop speaking</button></div>
+        <div class="actions"><button id="save">Save settings</button><button id="stop" class="danger" disabled>Stop speaking</button></div>
       </section>
 
       <section class="card">
         <h2>Manual test</h2>
         <label>Text<textarea id="manualText" rows="4" placeholder="Type something to read aloud…"></textarea></label>
-        <div class="actions"><button id="speakManual">Read text</button></div>
+        <div class="actions"><button id="speakManual" disabled>Read text</button></div>
       </section>
 
-      <div id="status" class="status">Starting…</div>
+      <div id="status" class="status" role="status" aria-live="polite" data-speech-state="initializing">Starting…</div>
     </main>
     <script type="module" src="./main.js"></script>
   </body>

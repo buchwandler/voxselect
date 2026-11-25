@@ -3,28 +3,21 @@ output = "context_voxselect.md"
 keep_docstrings = true
 dedupe = true
 respect_gitignore = true
-exclude = ["*/.venv/*", "context_voxselect.*"]
-include = [
-  "**/*.py",
-  "**/*.toml",
-  "**/*.rst",
-  "**/*.md",
-  "**/*.ssmd",
-  "**/*.json",
-  "**/*.jsonl",
-  "**/*.ipynb",
-  "**/*.txt",
-  "**/*.yaml",
-  "**/*.yml",
-  "**/*.js",
-  "**/*.rs",
-  "**/py.typed",
-  ".gitignore",
-  "LICENSE*",
-  "MANIFEST.in",
-  "NOTICE*",
+# exclude = ["*/.venv/*", "integration_tests", "examples", "docs"]
+gitignore_allow = []
+exclude = [
+  "*/.venv/*",
+  "todo.md",
+  "run.html",
+  "pi-session-*.html",
+  "*-session-*.html",
+  ".pytest_cache/*",
+  ".ruff_cache/*",
+  ".mypy_cache/*",
 ]
-split_max_chars = 5000000
+include_preset = "everything"
+split_max_chars = 0
+manifest = false
 layout = "full"
 profile = "portable-agent"
 emit_standalone_unpacker = true
