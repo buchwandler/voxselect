@@ -61,7 +61,9 @@ def request(
                 raise RuntimeError(f"sidecar command {command} failed: {error}")
             result = record.get("result")
             if not isinstance(result, dict):
-                raise RuntimeError(f"sidecar command {command} returned a non-object result")
+                raise RuntimeError(
+                    f"sidecar command {command} returned a non-object result"
+                )
             return result
         if isinstance(record.get("event"), str):
             notifications.append(record)
@@ -82,7 +84,9 @@ def wait_for_audio(
                 continue
             notifications.pop(index)
             if event.get("event") == "speech_error":
-                raise RuntimeError(f"real-engine synthesis failed: {event.get('message')}")
+                raise RuntimeError(
+                    f"real-engine synthesis failed: {event.get('message')}"
+                )
             if event.get("event") == "audio":
                 return event
         remaining = deadline - time.monotonic()
@@ -158,7 +162,8 @@ def run_real_engine(
             ready.get("event") != "ready"
             or ready.get("protocol") != PROTOCOL
             or ready.get("service") != SERVICE
-            or ready.get("service_version") != manifest.get("service", {}).get("version")
+            or ready.get("service_version")
+            != manifest.get("service", {}).get("version")
         ):
             raise RuntimeError(f"incompatible sidecar ready record: {ready}")
         request(process, reader, notifications, 1, "capabilities", {}, timeout)
@@ -194,7 +199,9 @@ def run_real_engine(
                 None,
             )
         if target is None:
-            raise RuntimeError(f"no runnable target is available for engine {engine_id}")
+            raise RuntimeError(
+                f"no runnable target is available for engine {engine_id}"
+            )
         target_id = target.get("id")
         if not isinstance(target_id, str) or not target_id:
             raise RuntimeError("selected target has no identifier")
@@ -253,7 +260,9 @@ def run_real_engine(
         )
         generation = accepted.get("generation")
         if accepted.get("accepted") is not True or not isinstance(generation, int):
-            raise RuntimeError(f"sidecar did not accept the synthesis request: {accepted}")
+            raise RuntimeError(
+                f"sidecar did not accept the synthesis request: {accepted}"
+            )
         audio_event = wait_for_audio(reader, notifications, generation, timeout)
         encoded_audio = audio_event.get("wav_base64")
         if not isinstance(encoded_audio, str):
@@ -286,9 +295,7 @@ def main() -> int:
     )
     parser.add_argument("--binary", type=Path, default=default_binary())
     parser.add_argument("--engine", default="kitten")
-    parser.add_argument(
-        "--text", default="VoxSelect real engine integration test."
-    )
+    parser.add_argument("--text", default="VoxSelect real engine integration test.")
     parser.add_argument(
         "--output", type=Path, default=Path("build/real-engine-smoke.wav")
     )

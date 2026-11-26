@@ -3,7 +3,5 @@
   "identifier": "default",
   "description": "VoxSelect desktop permissions",
   "windows": ["main"],
-  "permissions": [
-    "core:default"
-  ]
+  "permissions": ["core:default"]
 }

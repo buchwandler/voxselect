@@ -280,7 +280,9 @@ def stage_sidecar_metadata(
     suffix = ".exe" if system == "windows" else ""
     target_name = f"voxselect-readio-service-{target}"
     manifest = SIDECAR_BINARIES / f"{target_name}{suffix}.manifest.json"
-    constraints = SIDECAR_BINARIES / f"{target_name}-{engine_extra.lower()}.constraints.txt"
+    constraints = (
+        SIDECAR_BINARIES / f"{target_name}-{engine_extra.lower()}.constraints.txt"
+    )
     return [
         copy_download(manifest, downloads / manifest.name),
         copy_download(constraints, downloads / constraints.name),
@@ -314,7 +316,9 @@ def main() -> int:
     version = str(config.get("version") or "0.0.0")
     bundle_targets = [
         value.strip()
-        for value in (args.bundles.split(",") if args.bundles else default_bundles(system))
+        for value in (
+            args.bundles.split(",") if args.bundles else default_bundles(system)
+        )
         if value.strip()
     ]
 
@@ -372,9 +376,7 @@ def main() -> int:
         downloads=downloads,
     )
     records.extend(sidecar_records)
-    checksum_record = write_checksums(
-        downloads, records, f"{version}-{system}-{arch}"
-    )
+    checksum_record = write_checksums(downloads, records, f"{version}-{system}-{arch}")
 
     manifest = {
         "product": "VoxSelect",

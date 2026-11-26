@@ -18,6 +18,10 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
 const MAX_LOG_BYTES: u64 = 1024 * 1024;
+const MAX_STDERR_CHUNK_BYTES: usize = 8192;
+const MAX_STDERR_LINES: usize = 16;
+const MAX_STDERR_LINE_CHARS: usize = 1024;
+const MAX_STDERR_TOKEN_CHARS: usize = 128;
 
 type SharedLog = Arc<Mutex<BackendLog>>;
 type PendingRequest = oneshot::Sender<Result<Value, String>>;
@@ -70,6 +74,78 @@ impl BackendLog {
 fn write_log(log: &SharedLog, message: &str) {
     if let Ok(mut log) = log.lock() {
         log.write_line(message);
+    }
+}
+
+fn sanitize_stderr_line(line: &str) -> String {
+    let mut safe = String::new();
+    let mut escape = false;
+    for character in line.chars() {
+        if escape {
+            if character.is_ascii_alphabetic() {
+                escape = false;
+            }
+        } else if character == '\u{1b}' {
+            escape = true;
+        } else if !character.is_control() {
+            safe.push(character);
+        }
+    }
+    safe.split_whitespace()
+        .map(|token| {
+            if token.chars().count() > MAX_STDERR_TOKEN_CHARS {
+                "[redacted long token]"
+            } else {
+                token
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(MAX_STDERR_LINE_CHARS)
+        .collect()
+}
+
+fn safe_stderr_line(line: &str) -> Option<String> {
+    let line = sanitize_stderr_line(line);
+    let trimmed = line.trim();
+    if trimmed == "Traceback (most recent call last):" {
+        return Some(trimmed.to_string());
+    }
+    if let Some(kind) = trimmed.strip_prefix("sidecar request failed: ") {
+        if !kind.is_empty()
+            && kind
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        {
+            return Some(trimmed.to_string());
+        }
+    }
+    if trimmed.starts_with("File \"") && trimmed.contains(", line ") {
+        return Some(trimmed.to_string());
+    }
+    None
+}
+
+fn log_sidecar_stderr(log: &SharedLog, bytes: &[u8]) {
+    if std::env::var_os("VOXSELECT_DEBUG").is_none() {
+        write_log(log, &format!("sidecar stderr bytes={}", bytes.len()));
+        return;
+    }
+
+    let chunk = &bytes[..bytes.len().min(MAX_STDERR_CHUNK_BYTES)];
+    let decoded = String::from_utf8_lossy(chunk);
+    for line in decoded.lines().take(MAX_STDERR_LINES) {
+        let line =
+            safe_stderr_line(line).unwrap_or_else(|| "[sidecar stderr detail omitted]".to_string());
+        if line.is_empty() {
+            continue;
+        }
+        eprintln!("[sidecar] {line}");
+        write_log(log, &format!("sidecar stderr: {line}"));
+    }
+    if bytes.len() > chunk.len() || decoded.lines().count() > MAX_STDERR_LINES {
+        write_log(log, "sidecar stderr output truncated");
     }
 }
 
@@ -237,10 +313,7 @@ impl BackendState {
                         }
                     }
                     CommandEvent::Stderr(bytes) => {
-                        write_log(
-                            &reader_log,
-                            &format!("sidecar stderr bytes={}", bytes.len()),
-                        );
+                        log_sidecar_stderr(&reader_log, &bytes);
                     }
                     CommandEvent::Error(error) => {
                         fail_session(
@@ -487,8 +560,8 @@ fn fail_session(
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_response, parse_record, summarize_event, validate_ready_record, BackendLog,
-        JsonlDecoder, Session, MAX_LOG_BYTES, PROTOCOL, SERVICE,
+        decode_response, parse_record, safe_stderr_line, sanitize_stderr_line, summarize_event,
+        validate_ready_record, BackendLog, JsonlDecoder, Session, MAX_LOG_BYTES, PROTOCOL, SERVICE,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -715,5 +788,22 @@ mod tests {
         }));
         assert_eq!(progress_summary, "sidecar event=progress");
         assert!(!progress_summary.contains("selected text"));
+    }
+
+    #[test]
+    fn stderr_diagnostics_are_sanitized_and_bounded() {
+        let token = "spokenpayload".repeat(20);
+        let line = format!("panic: \u{1b}[31m{token}\u{1b}[0m");
+        let safe = sanitize_stderr_line(&line);
+        assert_eq!(safe, "panic: [redacted long token]");
+        assert!(!safe.contains(&token));
+        assert!(safe_stderr_line("private spoken phrase").is_none());
+        assert_eq!(
+            safe_stderr_line("sidecar request failed: RuntimeError").as_deref(),
+            Some("sidecar request failed: RuntimeError")
+        );
+
+        let long_line = "detail ".repeat(300);
+        assert!(sanitize_stderr_line(&long_line).chars().count() <= 1024);
     }
 }

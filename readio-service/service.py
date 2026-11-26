@@ -16,6 +16,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+import numpy as np
+
 from readio.api import (
     CancellationToken,
     Readio,
@@ -38,8 +40,6 @@ SERVICE_VERSION = "0.2.0"
 _OUTPUT_LOCK = threading.Lock()
 
 
-
-
 class Bridge:
     def __init__(self) -> None:
         self.settings: dict[str, Any] = {
@@ -55,7 +55,10 @@ class Bridge:
         self._generation = 0
         self._lock = threading.Lock()
         self._cancellation: CancellationToken | None = None
-        self._jobs: queue.Queue[tuple[int, str, Mapping[str, Any]]] = queue.Queue(maxsize=1)
+        self._pending_generations: set[int] = set()
+        self._jobs: queue.Queue[tuple[int, str, Mapping[str, Any]]] = queue.Queue(
+            maxsize=1
+        )
         self._shutdown = threading.Event()
         self._worker = threading.Thread(target=self._speech_worker, daemon=True)
         self._worker.start()
@@ -67,8 +70,6 @@ class Bridge:
     def settings_snapshot(self) -> dict[str, Any]:
         with self._lock:
             return dict(self.settings)
-
-
 
     def diagnostics(self) -> dict[str, Any]:
         settings = self.settings_snapshot()
@@ -83,7 +84,8 @@ class Bridge:
                 "platform": sys.platform,
                 "readio": serialize_public(self.readio.capabilities()),
                 "selection": {
-                    key: _none(settings.get(key)) for key in ("engine", "target", "voice")
+                    key: _none(settings.get(key))
+                    for key in ("engine", "target", "voice")
                 },
             },
         }
@@ -96,15 +98,35 @@ class Bridge:
             except queue.Empty:
                 return
 
+    def _cancel_pending_locked(self) -> tuple[int, ...]:
+        generations = tuple(sorted(self._pending_generations))
+        self._pending_generations.clear()
+        self._discard_queued_locked()
+        return generations
+
+    @staticmethod
+    def _emit_cancellations(generations: tuple[int, ...]) -> None:
+        for generation in generations:
+            emit({"event": "speech_canceled", "generation": generation})
+
+    def _finish_generation(self, generation: int, payload: Mapping[str, Any]) -> bool:
+        with self._lock:
+            if generation not in self._pending_generations:
+                return False
+            self._pending_generations.remove(generation)
+        emit(payload)
+        return True
+
     def invalidate(self) -> int:
         with self._lock:
             self._generation += 1
             generation = self._generation
             cancellation = self._cancellation
             self._cancellation = None
-            self._discard_queued_locked()
+            canceled_generations = self._cancel_pending_locked()
         if cancellation is not None:
             cancellation.cancel()
+        self._emit_cancellations(canceled_generations)
         return generation
 
     def configure(self, settings: Mapping[str, Any]) -> dict[str, Any]:
@@ -138,10 +160,12 @@ class Bridge:
             generation = self._generation
             cancellation = self._cancellation
             self._cancellation = None
-            self._discard_queued_locked()
+            canceled_generations = self._cancel_pending_locked()
+            if cancellation is not None:
+                cancellation.cancel()
+            self._emit_cancellations(canceled_generations)
+            self._pending_generations.add(generation)
             self._jobs.put_nowait((generation, text, settings))
-        if cancellation is not None:
-            cancellation.cancel()
         return generation
 
     def stop(self) -> int:
@@ -158,6 +182,7 @@ class Bridge:
             except queue.Empty:
                 continue
             cancellation: CancellationToken | None = None
+            job_generation: int | None = None
             try:
                 job_generation, text, settings = job
                 cancellation = CancellationToken()
@@ -174,32 +199,59 @@ class Bridge:
                     speaker=_speaker(settings.get("speaker")),
                     offline=bool(settings.get("offline", False)),
                 )
-                result = self.readio.synthesize(request, cancellation=cancellation)
-                if job_generation != self.generation():
-                    continue
-                wav = base64.b64encode(result.audio.to_wav_bytes()).decode("ascii")
-                emit(
+
+                def on_progress(event: Any) -> None:
+                    if job_generation != self.generation():
+                        return
+                    stage = _progress_stage(event)
+                    payload: dict[str, Any] = {
+                        "event": "progress",
+                        "generation": job_generation,
+                        "stage": stage,
+                        "message": safe_progress_message(event),
+                    }
+                    for field in ("current", "total"):
+                        value = getattr(event, field, None)
+                        if isinstance(value, int) and not isinstance(value, bool):
+                            payload[field] = value
+                    emit(payload)
+
+                result = self.readio.synthesize(
+                    request,
+                    on_progress=on_progress,
+                    cancellation=cancellation,
+                )
+                metadata = _audio_metadata(result.audio)
+                wav_bytes = result.audio.to_wav_bytes()
+                wav = base64.b64encode(wav_bytes).decode("ascii")
+                self._finish_generation(
+                    job_generation,
                     {
                         "event": "audio",
                         "generation": job_generation,
                         "wav_base64": wav,
+                        "wav_bytes": len(wav_bytes),
+                        "frames": metadata["frames"],
+                        "duration_seconds": metadata["duration_seconds"],
+                        "peak": metadata["peak"],
                         "profile_id": result.profile_id,
                         "warnings": list(result.warnings),
                         "elapsed_seconds": result.elapsed_seconds,
                         "sample_rate": result.audio.sample_rate,
                         "channels": result.audio.channels,
-                    }
+                    },
                 )
             except Exception as exc:
-                if job_generation == self.generation():
-                    emit(
+                if job_generation is not None:
+                    self._finish_generation(
+                        job_generation,
                         {
                             "event": "speech_error",
                             "generation": job_generation,
                             "message": str(exc),
                             "type": type(exc).__name__,
                             "error": _error_info(exc),
-                        }
+                        },
                     )
             finally:
                 if cancellation is not None:
@@ -289,6 +341,48 @@ def _error_info(error: Exception) -> dict[str, Any]:
     result.setdefault("recoverable", False)
     result.setdefault("suggested_action", None)
     return {"schema": "readio.error-info.v1", "result": result}
+
+
+_PROGRESS_MESSAGES = {
+    "convert": "Preparing speech assets",
+    "compile": "Preparing speech",
+    "render_plan": "Planning synthesis",
+    "render": "Synthesizing speech",
+    "compose": "Composing audio",
+    "export": "Preparing audio",
+}
+
+
+def _progress_stage(event: Any) -> str:
+    stage = getattr(event, "stage", None)
+    if not isinstance(stage, str):
+        stage = getattr(stage, "value", None)
+    return stage if stage in _PROGRESS_MESSAGES else "synthesis"
+
+
+def safe_progress_message(event: Any) -> str:
+    return _PROGRESS_MESSAGES.get(_progress_stage(event), "Preparing speech")
+
+
+def _audio_metadata(audio: Any) -> dict[str, int | float]:
+    samples = np.asarray(audio.audio, dtype=np.float32)
+    frames = int(audio.frames)
+    if frames <= 0:
+        raise RuntimeError("synthesis returned an empty audio buffer")
+    if not np.isfinite(samples).all():
+        raise RuntimeError("synthesis returned non-finite audio samples")
+
+    sample_rate = int(audio.sample_rate)
+    if sample_rate <= 0:
+        raise RuntimeError("synthesis returned an invalid sample rate")
+    peak = float(np.max(np.abs(samples))) if samples.size else 0.0
+    if peak < 1e-6:
+        raise RuntimeError("synthesis returned silent audio")
+    return {
+        "frames": frames,
+        "duration_seconds": frames / sample_rate,
+        "peak": peak,
+    }
 
 
 def emit(payload: Mapping[str, Any]) -> None:
@@ -429,7 +523,11 @@ def main() -> int:
                 }
             )
             if os.environ.get("VOXSELECT_DEBUG"):
-                traceback.print_exc(file=sys.stderr)
+                print(
+                    f"sidecar request failed: {type(exc).__name__}",
+                    file=sys.stderr,
+                )
+                traceback.print_tb(exc.__traceback__, file=sys.stderr, limit=20)
     bridge.shutdown()
     return 0
 

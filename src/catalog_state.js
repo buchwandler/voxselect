@@ -7,6 +7,10 @@ export function runtimeTargets(targets, language = "") {
   );
 }
 
+export function catalogOfflineSetting(settings) {
+  return Boolean(settings.offline);
+}
+
 export function catalogLanguages(targetsByEngine) {
   return [
     ...new Set(
@@ -46,14 +50,23 @@ export function chooseEngine(
 
 export function chooseTarget(savedTarget, targets, language) {
   const available = runtimeTargets(targets, language);
-  return available.find((target) => target.id === savedTarget) || available[0] || null;
+  return (
+    available.find((target) => target.id === savedTarget) ||
+    available[0] ||
+    null
+  );
+}
+
+export function runtimeVoices(voices) {
+  return voices.filter((voice) => voice.runtime_available !== false);
 }
 
 export function chooseVoice(savedVoice, voices, defaultVoice) {
+  const available = runtimeVoices(voices);
   return (
-    voices.find((voice) => voice.id === savedVoice) ||
-    voices.find((voice) => voice.id === defaultVoice) ||
-    voices[0] ||
+    available.find((voice) => voice.id === savedVoice) ||
+    available.find((voice) => voice.id === defaultVoice) ||
+    available[0] ||
     null
   );
 }
@@ -63,17 +76,34 @@ export function synthesisAvailability(capabilities, engine, target, voice) {
   if (result?.state !== "ready") {
     return {
       available: false,
-      reason: result?.reason || "Readio reports that speech synthesis is unavailable.",
+      reason:
+        result?.reason ||
+        "Readio reports that speech synthesis is unavailable.",
     };
   }
   if (!engine?.runnable) {
-    return { available: false, reason: "No runnable speech engine is available." };
+    return {
+      available: false,
+      reason: "No runnable speech engine is available.",
+    };
   }
   if (!target) {
-    return { available: false, reason: "No runtime-available target is available for this language." };
+    return {
+      available: false,
+      reason: "No runtime-available target is available for this language.",
+    };
   }
   if (!voice) {
-    return { available: false, reason: "No voice is available for this target." };
+    return {
+      available: false,
+      reason: "No voice is available for this target.",
+    };
+  }
+  if (voice.runtime_available === false) {
+    return {
+      available: false,
+      reason: "The selected voice is not available at runtime.",
+    };
   }
   return { available: true, reason: "" };
 }

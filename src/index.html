@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -12,7 +12,10 @@
       <header>
         <p class="eyebrow">LOCAL TEXT TO SPEECH</p>
         <h1>VoxSelect</h1>
-        <p class="lead">Highlight text, press the global shortcut, and hear it locally through Readio.</p>
+        <p class="lead">
+          Highlight text, press the global shortcut, and hear it locally through
+          Readio.
+        </p>
       </header>
 
       <section class="card">
@@ -23,18 +26,31 @@
           <label>Voice<select id="voice" disabled></select></label>
           <label>Language<select id="language" disabled></select></label>
           <label>Speaker<input id="speaker" placeholder="optional" /></label>
-          <label class="check"><input id="offline" type="checkbox" /> Offline only (model must already be cached)</label>
+          <label class="check"
+            ><input id="offline" type="checkbox" /> Offline only (model must
+            already be cached)</label
+          >
         </div>
         <div class="actions">
           <button id="testVoice" disabled>Test voice</button>
+          <button id="playbackTest" class="secondary">
+            Test playback tone
+          </button>
           <button id="discover" class="secondary">Refresh catalogs</button>
         </div>
         <pre id="engineInfo" hidden></pre>
         <pre id="playbackInfo" hidden></pre>
         <div class="actions">
-          <button id="refreshDiagnostics" class="secondary">Refresh backend diagnostics</button>
+          <button id="refreshDiagnostics" class="secondary">
+            Refresh backend diagnostics
+          </button>
         </div>
-        <pre id="diagnosticsInfo" hidden aria-label="Backend diagnostics" aria-live="polite"></pre>
+        <pre
+          id="diagnosticsInfo"
+          hidden
+          aria-label="Backend diagnostics"
+          aria-live="polite"
+        ></pre>
       </section>
 
       <section class="card">
@@ -42,20 +58,60 @@
         <div class="grid">
           <label>Read selection hotkey<input id="readHotkey" /></label>
           <label>Stop hotkey<input id="stopHotkey" /></label>
-          <label>Copy delay (ms)<input id="copyDelay" type="number" min="20" max="3000" /></label>
-          <label>Maximum characters<input id="maxChars" type="number" min="1" max="100000" /></label>
-          <label class="check"><input id="autostart" type="checkbox" /> Start at login</label>
+          <label
+            >Copy delay (ms)<input
+              id="copyDelay"
+              type="number"
+              min="20"
+              max="3000"
+          /></label>
+          <label
+            >Maximum characters<input
+              id="maxChars"
+              type="number"
+              min="1"
+              max="100000"
+          /></label>
+          <label class="check"
+            ><input id="autostart" type="checkbox" /> Start at login</label
+          >
         </div>
-        <div class="actions"><button id="save">Save settings</button><button id="stop" class="danger" disabled>Stop speaking</button></div>
+        <div class="actions">
+          <button id="save">Save settings</button
+          ><button id="stop" class="danger" disabled>Stop speaking</button>
+        </div>
       </section>
 
       <section class="card">
         <h2>Manual test</h2>
-        <label>Text<textarea id="manualText" rows="4" placeholder="Type something to read aloud…"></textarea></label>
-        <div class="actions"><button id="speakManual" disabled>Read text</button></div>
+        <label
+          >Text<textarea
+            id="manualText"
+            rows="4"
+            placeholder="Type something to read aloud…"
+          ></textarea>
+        </label>
+        <div class="actions">
+          <button id="speakManual" disabled>Read text</button>
+        </div>
       </section>
 
-      <div id="status" class="status" role="status" aria-live="polite" data-speech-state="initializing">Starting…</div>
+      <div
+        id="featureWarnings"
+        class="feature-warnings"
+        role="status"
+        aria-live="polite"
+        hidden
+      ></div>
+      <div
+        id="status"
+        class="status"
+        role="status"
+        aria-live="polite"
+        data-speech-state="initializing"
+      >
+        Starting…
+      </div>
     </main>
     <script type="module" src="./main.js"></script>
   </body>

@@ -155,7 +155,9 @@ def smoke(binary: Path, manifest_path: Path, timeout: float) -> None:
 
         runnable = [engine for engine in engines if engine.get("runnable")]
         if not runnable:
-            print("SKIP: no runnable engine is installed; target and voice queries were skipped")
+            print(
+                "SKIP: no runnable engine is installed; target and voice queries were skipped"
+            )
         else:
             engine = runnable[0]
             engine_id = engine.get("id")
@@ -171,7 +173,9 @@ def smoke(binary: Path, manifest_path: Path, timeout: float) -> None:
             )
             target_items = targets.get("result", {}).get("items", [])
             if not target_items:
-                print(f"SKIP: runnable engine {engine_id} has no offline target to query")
+                print(
+                    f"SKIP: runnable engine {engine_id} has no offline target to query"
+                )
             else:
                 target_id = target_items[0].get("id")
                 if not isinstance(target_id, str) or not target_id:
@@ -193,9 +197,7 @@ def smoke(binary: Path, manifest_path: Path, timeout: float) -> None:
                     raise RuntimeError("voice catalog did not contain an items list")
 
         shutdown_sequence = 6 if runnable else 4
-        shutdown = request(
-            process, reader, shutdown_sequence, "shutdown", {}, timeout
-        )
+        shutdown = request(process, reader, shutdown_sequence, "shutdown", {}, timeout)
         if shutdown.get("shutdown") is not True:
             raise RuntimeError(f"invalid sidecar shutdown response: {shutdown}")
         if process.wait(timeout=timeout) != 0:
@@ -210,7 +212,9 @@ def smoke(binary: Path, manifest_path: Path, timeout: float) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Smoke-test the target-triple frozen sidecar")
+    parser = argparse.ArgumentParser(
+        description="Smoke-test the target-triple frozen sidecar"
+    )
     parser.add_argument("--binary", type=Path)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--timeout", type=float, default=60.0)

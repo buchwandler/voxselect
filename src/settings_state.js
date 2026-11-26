@@ -19,10 +19,18 @@ export function sanitizeSettings(saved, defaults) {
   for (const key of ["offline", "autostart"]) {
     if (typeof settings[key] !== "boolean") settings[key] = defaults[key];
   }
-  if (!Number.isInteger(settings.copyDelay) || settings.copyDelay < 20 || settings.copyDelay > 3000) {
+  if (
+    !Number.isInteger(settings.copyDelay) ||
+    settings.copyDelay < 20 ||
+    settings.copyDelay > 3000
+  ) {
     settings.copyDelay = defaults.copyDelay;
   }
-  if (!Number.isInteger(settings.maxChars) || settings.maxChars < 1 || settings.maxChars > 100000) {
+  if (
+    !Number.isInteger(settings.maxChars) ||
+    settings.maxChars < 1 ||
+    settings.maxChars > 100000
+  ) {
     settings.maxChars = defaults.maxChars;
   }
   return settings;

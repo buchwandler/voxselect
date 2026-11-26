@@ -7,12 +7,13 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = ROOT / "readio-service" / "service.py"
-FAKE_READIO = '''
+FAKE_READIO = """
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -45,9 +46,13 @@ class SpeakRequest:
 
 
 class Readio:
-    def synthesize(self, request, *, cancellation):
+    def synthesize(self, request, *, cancellation, on_progress=None):
         cancellation.raise_if_cancelled()
+        if on_progress:
+            on_progress(SimpleNamespace(stage="render", message=request.text))
         audio = SimpleNamespace(
+            audio=[0.1, -0.1],
+            frames=2,
             to_wav_bytes=lambda: b"RIFFfake-WAVE",
             sample_rate=24000,
             channels=1,
@@ -67,7 +72,7 @@ def describe_error(error):
 
 def serialize_public(value):
     return value
-'''
+"""
 
 
 def _write_fake_readio(directory: Path) -> None:
@@ -151,22 +156,51 @@ def test_jsonl_sidecar_subprocess_with_fake_readio(tmp_path: Path) -> None:
         assert ping["protocol"] == 2
         assert ping["result"]["protocol"] == 2
 
-        send({"id": "configure-1", "protocol": 2, "command": "configure", "params": {"settings": {"engine": "fake"}}})
+        send(
+            {
+                "id": "configure-1",
+                "protocol": 2,
+                "command": "configure",
+                "params": {"settings": {"engine": "fake"}},
+            }
+        )
         configured = receive(lambda message: message.get("id") == "configure-1")
         assert configured["ok"] is True
         assert configured["result"]["engine"] == "fake"
 
-        send({"id": "speak-1", "protocol": 2, "command": "speak", "params": {"text": "hello"}})
+        send(
+            {
+                "id": "speak-1",
+                "protocol": 2,
+                "command": "speak",
+                "params": {"text": "hello"},
+            }
+        )
         speech = receive(lambda message: message.get("id") == "speak-1")
         assert speech["ok"] is True
         generation = speech["result"]["generation"]
+        progress = receive(
+            lambda message: (
+                message.get("event") == "progress"
+                and message.get("generation") == generation
+            )
+        )
+        assert progress["stage"] == "render"
+        assert progress["message"] == "Synthesizing speech"
+        assert "hello" not in str(progress)
         audio = receive(
-            lambda message: message.get("event") == "audio"
-            and message.get("generation") == generation
+            lambda message: (
+                message.get("event") == "audio"
+                and message.get("generation") == generation
+            )
         )
         assert audio["wav_base64"]
         assert audio["sample_rate"] == 24000
         assert audio["channels"] == 1
+        assert audio["frames"] == 2
+        assert audio["duration_seconds"] == 2 / 24000
+        assert abs(audio["peak"] - 0.1) < 1e-6
+        assert audio["wav_bytes"] == len(b"RIFFfake-WAVE")
 
         send({"id": "shutdown-1", "protocol": 2, "command": "shutdown", "params": {}})
         shutdown = receive(lambda message: message.get("id") == "shutdown-1")

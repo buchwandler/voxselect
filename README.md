@@ -36,6 +36,12 @@ Use the engine, target, and voice selectors to choose values exposed by the runn
 
 Refresh backend diagnostics to inspect Readio capabilities, service/runtime versions, platform, and selected engine identifiers. Rust writes bounded logs to the application data directory as `voxselect.log`, rotating an oversized file to `voxselect.log.1`. Logs omit selected text and WAV payloads.
 
+### Linux playback diagnostics
+
+Run `python scripts/doctor_linux.py` to inspect the WebKitGTK 4.1 runtime and the GStreamer WAV, conversion, resampling, and audio-sink plugins. Add `--tone-test` to run a short GStreamer tone through the default sink. Install the distribution's WebKitGTK 4.1 and GStreamer tools/base/good packages if the doctor reports missing dependencies. After real synthesis, check the WAV separately with `paplay build/real-engine-smoke.wav` or a desktop player; a successful command does not prove audibility. Use the **Test playback tone** button to exercise the app's WebView Blob-WAV path without invoking Readio. A successful pipeline or ended playback event does not establish that a person heard the tone. Confirm output on the intended physical device.
+
+AppImage builds enable Tauri's `bundle.linux.appimage.bundleMediaFramework` option. This increases package size to include GStreamer playback dependencies; development playback still uses the host multimedia stack. EGL/ZINK/GTK rendering warnings are a separate graphics path, not evidence of a Kitten failure. If the window is blank or unstable, try `WEBKIT_DISABLE_DMABUF_RENDERER=1 npm run tauri:dev` as a temporary diagnostic and record whether the session is X11 or Wayland.
+
 ## Selection and platform limitations
 
 Selection capture uses the sidecar to send a synthetic Copy keystroke. Rust temporarily replaces the clipboard contents, reads the resulting plain text, and restores the previous plain-text value. Non-text clipboard formats are not preserved. Apps that block synthetic Copy, have no selection, or do not expose plain text may fail. Read clipboard is the fallback for text already copied.

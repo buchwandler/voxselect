@@ -51,7 +51,9 @@ def test_version_manifest_binds_versions_constraints_and_binary(tmp_path: Path) 
     assert json.loads(manifest_path.read_text(encoding="utf-8")) == manifest
 
 
-def test_smoke_script_has_explicit_skip_for_missing_target_binary(tmp_path: Path) -> None:
+def test_smoke_script_has_explicit_skip_for_missing_target_binary(
+    tmp_path: Path,
+) -> None:
     missing = tmp_path / "missing-sidecar"
     result = subprocess.run(
         [sys.executable, str(SMOKE_SCRIPT), "--binary", str(missing), "--skip-missing"],
@@ -79,7 +81,6 @@ def test_exact_target_frozen_sidecar_smoke() -> None:
         timeout=180,
     )
     assert "PASS:" in result.stdout
-
 
 
 def test_release_stages_sidecar_metadata(

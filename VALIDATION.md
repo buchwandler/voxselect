@@ -4,21 +4,20 @@ Validation below describes the current working tree. Automated checks establish 
 
 ## Automated checks passed
 
-- `python -m pytest -q`: 24 passed. This includes the Python service, protocol, capability, packaging-manifest, and WAV-validation tests.
-- `node --test tests/*.test.js`: 9 passed.
+- `python -m pytest -q`: 31 passed, including service progress, cancellation, invalid-audio, and protocol tests.
+- `node --test tests/*.test.js`: 18 passed, including playback-tone WAV validation.
 - `npm run build`: passed.
-- `cargo test --manifest-path src-tauri/Cargo.toml`: 10 Rust tests passed.
-- A Linux x86_64 frozen sidecar was rebuilt using its generated dependency constraints. Its version manifest matched the exact binary and constraints hashes.
-- `python scripts/smoke_sidecar.py`: passed the frozen sidecar ready handshake, ping, capabilities, runnable Kitten engine catalog, target and voice catalog queries, and shutdown.
+- `cargo test --manifest-path src-tauri/Cargo.toml`: 11 Rust tests passed.
+- `env -u CI node_modules/.bin/tauri build --no-bundle --debug` passed using the locked Tauri CLI 2.12.6 schema, including `bundle.linux.appimage.bundleMediaFramework`. No package bundle was produced by this check.
+- `python scripts/build_sidecar.py --engine-extra kitten` rebuilt the Linux frozen sidecar with dynamic language modules collected and updated its hash manifest.
+- `python scripts/smoke_sidecar.py`: passed the frozen sidecar ready handshake, ping, capabilities, Kitten engine catalog, and shutdown.
 - Both GitHub Actions workflow files parsed as YAML. The regular build workflow gates artifact jobs on Python, frontend, and Rust tests. Its Windows, macOS, and Linux matrix runs the exact-target frozen-sidecar smoke before packaging.
-- A Linux Tauri build produced DEB and RPM packages in this workspace.
 
-The build and smoke checks above cover this Linux target only. The cross-platform jobs have not been executed in this workspace. The real-engine workflow and script are present, but real model synthesis was not run locally.
+The build and smoke checks above cover this Linux target only. The cross-platform jobs have not been executed in this workspace. Real Kitten synthesis passed locally, but physical-device audibility and interactive application playback remain unverified.
 
 ## Not validated
 
 - Audible output from physical Windows, macOS, or Linux devices. A valid non-silent WAV is not evidence that the audio device played it or that speech was intelligible.
-- Real Kitten model execution, model download, or synthesis through the separately scheduled/manual workflow.
 - Actual selection capture, hotkey behavior, clipboard restoration, accessibility permissions, or app shutdown on physical devices.
 - Wayland behavior across compositors.
 - macOS signing/notarization or Windows production signing.
@@ -26,6 +25,14 @@ The build and smoke checks above cover this Linux target only. The cross-platfor
 - Ruff linting, because `ruff` is unavailable in the project environment.
 
 The real-engine workflow is isolated from pull requests and runs on a schedule or manual dispatch. `scripts/smoke_real_engine.py` fails if the configured engine or target is unavailable, synthesis errors, the WAV is invalid, or its PCM samples are silent. It never treats skipped synthesis as success. The check still does not prove physical playback or audibility.
+
+## Linux multimedia validation
+
+- The locked npm dependency and installed local schema are Tauri CLI 2.12.6. `env -u CI node_modules/.bin/tauri build --no-bundle --debug` passed with `bundle.linux.appimage.bundleMediaFramework: true`; no bundle was created.
+- `python scripts/doctor_linux.py` found WebKitGTK 4.1 version 2.54.2, but `gst-inspect-1.0` is absent. The doctor exited 1 because the required GStreamer plugins could not be checked.
+- `python scripts/doctor_linux.py --tone-test` also found `gst-launch-1.0` absent, so no GStreamer tone was played.
+- The real-engine smoke generated a valid non-silent 24 kHz mono WAV with 89,800 frames at `build/real-engine-smoke.wav`. `paplay build/real-engine-smoke.wav` exited 0, but no person confirmed audible output. The interactive application's playback-tone and Test voice paths were not exercised in this session. No physical-device or WebView result is inferred.
+- The first frozen Kitten synthesis attempt exposed missing dynamic `numeralform` and `abbr2words` modules. The PyInstaller build now collects those packages, and the real-engine smoke passes. The required repeatable WebView failure after a system-player check has not been demonstrated. Playback ownership remains in the WebView; Rust-native playback is not justified by current evidence.
 
 ## Manual audible-speech checklist
 

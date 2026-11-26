@@ -1,23 +1,35 @@
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { SpeechGeneration } from "./sidecar_protocol.js";
+import { SpeechRequestQueue } from "./speech_request_queue.js";
 import {
   catalogLanguages,
+  catalogOfflineSetting,
   chooseEngine,
   chooseLanguage,
   chooseTarget,
   chooseVoice,
+  runtimeVoices,
   runtimeTargets,
   synthesisAvailability,
 } from "./catalog_state.js";
-import { base64ByteLength, playAudioElement } from "./audio_playback.js";
+import {
+  base64ByteLength,
+  createPlaybackTestWav,
+  playAudioElement,
+} from "./audio_playback.js";
 import { canSpeak, SPEECH_STATES, speechStatus } from "./speech_ui_state.js";
 import { sanitizeSettings } from "./settings_state.js";
+import { initializeOptionalFeatures } from "./optional_features.js";
+import {
+  createSpeechTransaction,
+  playbackDiagnostic,
+} from "./speech_diagnostics.js";
 
 const DEFAULTS = {
   engine: "kitten",
-  target: "KittenML/kitten-tts-mini-0.8",
-  voice: "Jasper",
+  target: "",
+  voice: "",
   language: "en-US",
   speaker: "",
   offline: false,
@@ -33,6 +45,8 @@ let settings = loadSettings();
 let currentAudio = null;
 let currentAudioUrl = null;
 const speechGeneration = new SpeechGeneration();
+const speechRequests = new SpeechRequestQueue();
+let speechTransaction = null;
 let speechUiState = SPEECH_STATES.INITIALIZING;
 let startupReady = false;
 let synthesisAvailable = false;
@@ -50,6 +64,7 @@ let voiceCatalog = {
   voiceError: "",
 };
 let shuttingDown = false;
+const optionalFeatureWarnings = new Map();
 
 function loadSettings() {
   try {
@@ -72,6 +87,32 @@ function setStatus(message, kind = "") {
   node.className = `status ${kind}`.trim();
 }
 
+function renderFeatureWarnings() {
+  const node = $("featureWarnings");
+  node.hidden = optionalFeatureWarnings.size === 0;
+  node.textContent = [...optionalFeatureWarnings.values()].join("\n");
+}
+
+function showNonFatalFeatureWarning(feature, error) {
+  const guidance = {
+    shortcuts:
+      "Global shortcuts are unavailable. Test voice and Manual test remain usable. Check desktop permissions or choose different hotkeys.",
+    autostart:
+      "Start at login is unavailable. Speech remains usable. Check desktop autostart permissions or disable Start at login.",
+  };
+  const detail = error?.message || String(error);
+  console.warn(`${feature} unavailable`, error);
+  optionalFeatureWarnings.set(
+    feature,
+    `${guidance[feature]} Details: ${detail}`
+  );
+  renderFeatureWarnings();
+}
+
+function clearNonFatalFeatureWarning(feature) {
+  optionalFeatureWarnings.delete(feature);
+  renderFeatureWarnings();
+}
 
 function setSpeechState(state, detail = "") {
   speechUiState = state;
@@ -81,7 +122,13 @@ function setSpeechState(state, detail = "") {
   const enabled = startupReady && synthesisAvailable && canSpeak(state, true);
   $("testVoice").disabled = !enabled;
   $("speakManual").disabled = !enabled;
-  $("stop").disabled = !["capturing_selection", "synthesizing", "playing", "speaking", "stopping"].includes(state);
+  $("stop").disabled = ![
+    "capturing_selection",
+    "synthesizing",
+    "playing",
+    "speaking",
+    "stopping",
+  ].includes(state);
 }
 
 async function runUiAction(label, action) {
@@ -125,17 +172,24 @@ async function startSidecar() {
 
 function handleSidecarEvent(message) {
   if (
-    !["audio", "speech_error", "speech_canceled", "progress"].includes(message.event)
+    !["audio", "speech_error", "speech_canceled", "progress"].includes(
+      message.event
+    )
   ) {
     return;
   }
-  for (const event of speechGeneration.observe(message)) handleSpeechEvent(event);
+  for (const event of speechGeneration.observe(message))
+    handleSpeechEvent(event);
 }
 
 function setPlaybackDiagnostics(event, details = {}) {
   const node = $("playbackInfo");
   node.hidden = false;
-  node.textContent = JSON.stringify({ event, ...details }, null, 2);
+  node.textContent = JSON.stringify(
+    playbackDiagnostic(event, speechTransaction, details),
+    null,
+    2
+  );
 }
 
 async function refreshDiagnostics() {
@@ -153,29 +207,58 @@ function readyOrUnavailable() {
 function handleSpeechEvent(message) {
   if (!speechGeneration.matches(message.generation)) return;
   if (message.event === "audio") {
+    const wavBytes =
+      message.wav_bytes ?? base64ByteLength(message.wav_base64 || "");
+    if (speechTransaction) {
+      speechTransaction.sidecar_generation = message.generation;
+      speechTransaction.audio_received_at = new Date().toISOString();
+      speechTransaction.wav_bytes = wavBytes;
+      speechTransaction.frames = message.frames ?? null;
+      speechTransaction.duration_seconds = message.duration_seconds ?? null;
+      speechTransaction.peak = message.peak ?? null;
+      speechTransaction.terminal_event = "audio";
+    }
     setPlaybackDiagnostics("audio_received", {
       generation: message.generation,
-      bytes: base64ByteLength(message.wav_base64 || ""),
+      bytes: wavBytes,
       sample_rate: message.sample_rate,
       channels: message.channels,
       elapsed_seconds: message.elapsed_seconds,
       warnings: message.warnings || [],
     });
     setSpeechState(SPEECH_STATES.PLAYING);
-    if (message.wav_base64) void playBase64Wav(message.wav_base64, message.generation);
+    if (message.wav_base64)
+      void playBase64Wav(message.wav_base64, message.generation);
     return;
   }
   if (message.event === "speech_error") {
+    if (speechTransaction) {
+      speechTransaction.sidecar_generation = message.generation;
+      speechTransaction.terminal_event = "speech_error";
+    }
+    setPlaybackDiagnostics("speech_error", {
+      generation: message.generation,
+      error: message.error || null,
+    });
     speechGeneration.fail(message.generation);
     setSpeechState(SPEECH_STATES.ERROR, message.message || "Speech failed");
     return;
   }
   if (message.event === "speech_canceled") {
+    if (speechTransaction) speechTransaction.terminal_event = "speech_canceled";
+    setPlaybackDiagnostics("speech_canceled", {
+      generation: message.generation,
+    });
     speechGeneration.fail(message.generation);
     readyOrUnavailable();
     return;
   }
   if (message.event === "progress") {
+    setPlaybackDiagnostics("synthesis_progress", {
+      generation: message.generation,
+      stage: message.stage || null,
+      message: message.message || "",
+    });
     setSpeechState(SPEECH_STATES.SYNTHESIZING, message.message || "");
   }
 }
@@ -230,7 +313,6 @@ async function configureSidecar() {
   });
 }
 
-
 function populateSelect(id, items, selected, getValue, getLabel, emptyLabel) {
   const select = $(id);
   select.replaceChildren();
@@ -239,7 +321,8 @@ function populateSelect(id, items, selected, getValue, getLabel, emptyLabel) {
     select.disabled = true;
     return;
   }
-  for (const item of items) select.add(new Option(getLabel(item), getValue(item)));
+  for (const item of items)
+    select.add(new Option(getLabel(item), getValue(item)));
   select.value = selected;
   select.disabled = false;
 }
@@ -248,25 +331,38 @@ function availableEngines(language) {
   return voiceCatalog.engines.filter(
     (engine) =>
       engine.runnable &&
-      runtimeTargets(voiceCatalog.targetsByEngine[engine.id] || [], language).length > 0
+      runtimeTargets(voiceCatalog.targetsByEngine[engine.id] || [], language)
+        .length > 0
   );
 }
 
-async function fetchVoices(engine, target, language, { offline = true, refresh = false } = {}) {
+async function fetchVoices(
+  engine,
+  target,
+  language,
+  { offline = true, refresh = false } = {}
+) {
   const key = `${engine}\u0000${target}\u0000${language}\u0000${offline}`;
-  if (!refresh && voiceCatalog.voiceCache.has(key)) return voiceCatalog.voiceCache.get(key);
+  if (!refresh && voiceCatalog.voiceCache.has(key))
+    return voiceCatalog.voiceCache.get(key);
   const response = await request(
     "voices",
     { engine, target, language, offline, refresh },
     30000
   );
-  const voices = Array.isArray(response?.result?.items) ? response.result.items : [];
+  const voices = Array.isArray(response?.result?.items)
+    ? response.result.items
+    : [];
   voiceCatalog.voiceCache.set(key, voices);
   return voices;
 }
 
-async function reconcileVoiceSelection(value = settings, { configure = false, persist = false } = {}) {
-  const language = chooseLanguage(value.language, voiceCatalog.languages) || DEFAULTS.language;
+async function reconcileVoiceSelection(
+  value = settings,
+  { configure = false, persist = false } = {}
+) {
+  const language =
+    chooseLanguage(value.language, voiceCatalog.languages) || DEFAULTS.language;
   const engines = availableEngines(language);
   const engine = chooseEngine(
     value.engine,
@@ -282,10 +378,12 @@ async function reconcileVoiceSelection(value = settings, { configure = false, pe
   let voiceError = "";
   if (engine && target) {
     try {
-      voices = await fetchVoices(engine.id, target.id, language, {
-        offline: voiceCatalog.offline || Boolean(value.offline),
-        refresh: voiceCatalog.refresh,
-      });
+      voices = runtimeVoices(
+        await fetchVoices(engine.id, target.id, language, {
+          offline: voiceCatalog.offline || Boolean(value.offline),
+          refresh: voiceCatalog.refresh,
+        })
+      );
     } catch (error) {
       voiceError = error?.message || String(error);
     }
@@ -330,17 +428,24 @@ async function reconcileVoiceSelection(value = settings, { configure = false, pe
     voices,
     settings.voice,
     (item) => item.id,
-    (item) => item.language_label ? `${item.id} (${item.language_label})` : item.id,
+    (item) =>
+      item.language_label ? `${item.id} (${item.language_label})` : item.id,
     voiceError || "No voices available for this target"
   );
   settingsToForm(settings);
-  const availability = synthesisAvailability(voiceCatalog.synthesis, engine, target, voice);
+  const availability = synthesisAvailability(
+    voiceCatalog.synthesis,
+    engine,
+    target,
+    voice
+  );
   if (
     !engine &&
     voiceCatalog.synthesis?.result?.state === "ready" &&
     voiceCatalog.engines.some((item) => item.runnable)
   ) {
-    availability.reason = "No runtime-available target is available for this language.";
+    availability.reason =
+      "No runtime-available target is available for this language.";
   }
   if (!availability.available && voiceError && engine && target && !voice) {
     availability.reason = voiceError;
@@ -351,7 +456,9 @@ async function reconcileVoiceSelection(value = settings, { configure = false, pe
   renderCatalogInfo(availability);
   if (startupReady) {
     setSpeechState(
-      availability.available ? SPEECH_STATES.READY : SPEECH_STATES.ENGINE_UNAVAILABLE,
+      availability.available
+        ? SPEECH_STATES.READY
+        : SPEECH_STATES.ENGINE_UNAVAILABLE,
       availability.reason
     );
   }
@@ -393,25 +500,29 @@ async function loadVoiceCatalogs({ offline = true, refresh = false } = {}) {
     request("synthesis_capabilities", {}, 30000),
     request("engines", {}, 30000),
   ]);
-  const engines = Array.isArray(engineCatalog?.engines) ? engineCatalog.engines : [];
+  const engines = Array.isArray(engineCatalog?.engines)
+    ? engineCatalog.engines
+    : [];
   const targetsByEngine = {};
   const targetErrors = {};
   await Promise.all(
-    engines.filter((engine) => engine.runnable).map(async (engine) => {
-      try {
-        const response = await request(
-          "targets",
-          { engine: engine.id, offline, refresh },
-          30000
-        );
-        targetsByEngine[engine.id] = Array.isArray(response?.result?.items)
-          ? response.result.items
-          : [];
-      } catch (error) {
-        targetsByEngine[engine.id] = [];
-        targetErrors[engine.id] = error?.message || String(error);
-      }
-    })
+    engines
+      .filter((engine) => engine.runnable)
+      .map(async (engine) => {
+        try {
+          const response = await request(
+            "targets",
+            { engine: engine.id, offline, refresh },
+            30000
+          );
+          targetsByEngine[engine.id] = Array.isArray(response?.result?.items)
+            ? response.result.items
+            : [];
+        } catch (error) {
+          targetsByEngine[engine.id] = [];
+          targetErrors[engine.id] = error?.message || String(error);
+        }
+      })
   );
   voiceCatalog = {
     capabilities,
@@ -432,7 +543,9 @@ async function loadVoiceCatalogs({ offline = true, refresh = false } = {}) {
   startupReady = true;
   saveLocalSettings(settings);
   setSpeechState(
-    availability.available ? SPEECH_STATES.READY : SPEECH_STATES.ENGINE_UNAVAILABLE,
+    availability.available
+      ? SPEECH_STATES.READY
+      : SPEECH_STATES.ENGINE_UNAVAILABLE,
     availability.reason
   );
 }
@@ -453,12 +566,7 @@ function base64ToBlob(base64, contentType) {
   return new Blob([bytes], { type: contentType });
 }
 
-function stopPlayback(sendStop = true) {
-  if (sendStop) {
-    speechGeneration.cancel();
-    setSpeechState(SPEECH_STATES.STOPPING);
-    setPlaybackDiagnostics("stop_requested");
-  }
+function stopLocalPlayback() {
   if (currentAudio) {
     currentAudio.pause();
     currentAudio.currentTime = 0;
@@ -468,25 +576,34 @@ function stopPlayback(sendStop = true) {
     URL.revokeObjectURL(currentAudioUrl);
     currentAudioUrl = null;
   }
-  if (sendStop && startupReady) {
-    request("stop").then(
-      () => {
-        if (speechUiState === SPEECH_STATES.STOPPING) readyOrUnavailable();
-      },
-      (error) => {
-        if (speechUiState === SPEECH_STATES.STOPPING) {
-          setSpeechState(SPEECH_STATES.ERROR, `Stop failed: ${error.message || error}`);
-        }
-      }
-    );
-  } else if (sendStop) {
+}
+
+async function stopPlayback() {
+  speechGeneration.cancel();
+  stopLocalPlayback();
+  if (!startupReady) {
     readyOrUnavailable();
+    return;
+  }
+
+  setSpeechState(SPEECH_STATES.STOPPING);
+  if (speechTransaction) speechTransaction.terminal_event = "stop_requested";
+  setPlaybackDiagnostics("stop_requested");
+  try {
+    await speechRequests.stop(() => request("stop"));
+    readyOrUnavailable();
+  } catch (error) {
+    setSpeechState(
+      SPEECH_STATES.ERROR,
+      `Stop failed: ${error.message || error}`
+    );
+    throw error;
   }
 }
 
 async function playBase64Wav(base64, generation) {
   if (!speechGeneration.matches(generation)) return;
-  stopPlayback(false);
+  stopLocalPlayback();
   let url = null;
   let audio = null;
   try {
@@ -503,6 +620,8 @@ async function playBase64Wav(base64, generation) {
         currentAudio = null;
         currentAudioUrl = null;
         speechGeneration.fail(generation);
+        if (speechTransaction)
+          speechTransaction.playback_ended_at = new Date().toISOString();
         setPlaybackDiagnostics("playback_ended", { generation });
         readyOrUnavailable();
       },
@@ -511,11 +630,15 @@ async function playBase64Wav(base64, generation) {
     await playAudioElement(audio, {
       onStarted: () => {
         if (!speechGeneration.matches(generation)) return;
+        if (speechTransaction)
+          speechTransaction.playback_started_at = new Date().toISOString();
         setPlaybackDiagnostics("playback_started", { generation });
         setSpeechState(SPEECH_STATES.SPEAKING);
       },
       onFailed: (error) => {
         if (speechGeneration.matches(generation)) {
+          if (speechTransaction)
+            speechTransaction.playback_failed_at = new Date().toISOString();
           setPlaybackDiagnostics("playback_failed", {
             generation,
             message: error?.message || String(error),
@@ -529,18 +652,58 @@ async function playBase64Wav(base64, generation) {
     if (currentAudio === audio) currentAudio = null;
     currentAudioUrl = null;
     speechGeneration.fail(generation);
+    if (speechTransaction)
+      speechTransaction.playback_failed_at = new Date().toISOString();
     console.error("Audio playback failed", error);
-    setSpeechState(SPEECH_STATES.ERROR, `Audio playback failed: ${error?.message || error}`);
+    setSpeechState(
+      SPEECH_STATES.ERROR,
+      `Audio playback failed: ${error?.message || error}`
+    );
+  }
+}
+
+async function playPlaybackTestTone() {
+  const url = URL.createObjectURL(createPlaybackTestWav());
+  let timeout;
+  try {
+    const audio = new Audio(url);
+    const ended = new Promise((resolve, reject) => {
+      timeout = setTimeout(
+        () => reject(new Error("Playback test timed out.")),
+        5000
+      );
+      audio.addEventListener("ended", resolve, { once: true });
+      audio.addEventListener(
+        "error",
+        () => reject(new Error("WebView audio playback failed.")),
+        { once: true }
+      );
+    });
+    await playAudioElement(audio, {
+      onStarted: () =>
+        setStatus("Playback tone started. Listen for a short beep."),
+    });
+    await ended;
+    setStatus("Playback tone ended. Confirm audible output manually.", "ok");
+  } finally {
+    clearTimeout(timeout);
+    URL.revokeObjectURL(url);
   }
 }
 
 async function speakText(text) {
   if (!startupReady) {
-    setSpeechState(SPEECH_STATES.BACKEND_UNAVAILABLE, "The service is not ready.");
+    setSpeechState(
+      SPEECH_STATES.BACKEND_UNAVAILABLE,
+      "The service is not ready."
+    );
     return;
   }
   if (!synthesisAvailable) {
-    setSpeechState(SPEECH_STATES.ENGINE_UNAVAILABLE, "Select an available engine, target, and voice.");
+    setSpeechState(
+      SPEECH_STATES.ENGINE_UNAVAILABLE,
+      "Select an available engine, target, and voice."
+    );
     return;
   }
   const clean = String(text || "").trim();
@@ -550,14 +713,30 @@ async function speakText(text) {
   }
   const max = Number(settings.maxChars || DEFAULTS.maxChars);
   if (clean.length > max) {
-    setSpeechState(SPEECH_STATES.ERROR, `Selection is ${clean.length} characters; limit is ${max}`);
+    setSpeechState(
+      SPEECH_STATES.ERROR,
+      `Selection is ${clean.length} characters; limit is ${max}`
+    );
     return;
   }
-  stopPlayback();
-  setSpeechState(SPEECH_STATES.SYNTHESIZING);
+
+  stopLocalPlayback();
   const sequence = speechGeneration.begin();
+  speechTransaction = createSpeechTransaction(sequence, settings);
+  setSpeechState(SPEECH_STATES.STOPPING);
+  setPlaybackDiagnostics("stop_requested");
   try {
-    const result = await request("speak", { text: clean });
+    const result = await speechRequests.replace(
+      () => request("stop"),
+      () => {
+        if (!speechGeneration.isCurrent(sequence)) return null;
+        setSpeechState(SPEECH_STATES.SYNTHESIZING);
+        return request("speak", { text: clean });
+      }
+    );
+    if (!result || !speechGeneration.isCurrent(sequence)) return;
+    speechTransaction.sidecar_generation = result.generation;
+    speechTransaction.accepted_at = new Date().toISOString();
     const events = speechGeneration.acknowledge(sequence, result.generation);
     for (const event of events) handleSpeechEvent(event);
   } catch (error) {
@@ -567,15 +746,19 @@ async function speakText(text) {
   }
 }
 
-
-
 async function readSelection() {
   if (!startupReady) {
-    setSpeechState(SPEECH_STATES.BACKEND_UNAVAILABLE, "The service is not ready.");
+    setSpeechState(
+      SPEECH_STATES.BACKEND_UNAVAILABLE,
+      "The service is not ready."
+    );
     return;
   }
   if (!synthesisAvailable) {
-    setSpeechState(SPEECH_STATES.ENGINE_UNAVAILABLE, "Select an available engine, target, and voice.");
+    setSpeechState(
+      SPEECH_STATES.ENGINE_UNAVAILABLE,
+      "Select an available engine, target, and voice."
+    );
     return;
   }
   try {
@@ -584,25 +767,37 @@ async function readSelection() {
       delayMs: Number(settings.copyDelay || DEFAULTS.copyDelay),
     });
     if (!text) {
-      setSpeechState(SPEECH_STATES.ERROR, "No selectable text captured. Try Read clipboard.");
+      setSpeechState(
+        SPEECH_STATES.ERROR,
+        "No selectable text captured. Try Read clipboard."
+      );
       return;
     }
     await speakText(text);
   } catch (error) {
-    setSpeechState(SPEECH_STATES.ERROR, `Selection capture failed: ${error.message || error}`);
+    setSpeechState(
+      SPEECH_STATES.ERROR,
+      `Selection capture failed: ${error.message || error}`
+    );
   }
 }
 
 async function readClipboard() {
   if (!startupReady) {
-    setSpeechState(SPEECH_STATES.BACKEND_UNAVAILABLE, "The service is not ready.");
+    setSpeechState(
+      SPEECH_STATES.BACKEND_UNAVAILABLE,
+      "The service is not ready."
+    );
     return;
   }
   let text;
   try {
     text = await invoke("read_clipboard");
   } catch (error) {
-    setSpeechState(SPEECH_STATES.ERROR, `Could not read plain-text clipboard: ${error.message || error}`);
+    setSpeechState(
+      SPEECH_STATES.ERROR,
+      `Could not read plain-text clipboard: ${error.message || error}`
+    );
     return;
   }
   if (!text.trim()) {
@@ -626,13 +821,23 @@ async function applyAutostart() {
   if (enabled !== currently) await invoke("set_autostart", { enabled });
 }
 
+async function configureOptionalDesktopFeatures() {
+  await initializeOptionalFeatures({
+    configureShortcuts,
+    applyAutostart,
+    onWarning: showNonFatalFeatureWarning,
+    onAvailable: clearNonFatalFeatureWarning,
+  });
+}
+
 async function saveSettings() {
   settings = { ...settings, ...formToSettings() };
   const availability = await applyVoiceSelection();
-  await configureShortcuts();
-  await applyAutostart();
+  await configureOptionalDesktopFeatures();
   setSpeechState(
-    availability.available ? SPEECH_STATES.READY : SPEECH_STATES.ENGINE_UNAVAILABLE,
+    availability.available
+      ? SPEECH_STATES.READY
+      : SPEECH_STATES.ENGINE_UNAVAILABLE,
     availability.available ? "Settings saved" : availability.reason
   );
 }
@@ -657,10 +862,18 @@ async function init() {
   $("save").addEventListener("click", () =>
     runUiAction("Could not apply settings", saveSettings)
   );
-  $("stop").addEventListener("click", () => stopPlayback());
+  $("stop").addEventListener("click", () =>
+    runUiAction("Stop failed", stopPlayback)
+  );
   $("speakManual").addEventListener("click", () =>
     runUiAction("Speech failed", () => speakText($("manualText").value))
   );
+  $("playbackTest").addEventListener("click", () => {
+    void playPlaybackTestTone().catch((error) => {
+      console.error("Playback test failed", error);
+      setStatus(`Playback test failed: ${error?.message || error}`, "error");
+    });
+  });
   $("testVoice").addEventListener("click", () =>
     runUiAction("Test voice failed", async () => {
       const availability = await applyVoiceSelection();
@@ -685,16 +898,22 @@ async function init() {
   await listen("backend-error", (event) => {
     startupReady = false;
     if (!shuttingDown) {
-      setSpeechState(SPEECH_STATES.BACKEND_UNAVAILABLE, String(event.payload || "Backend failed"));
+      setSpeechState(
+        SPEECH_STATES.BACKEND_UNAVAILABLE,
+        String(event.payload || "Backend failed")
+      );
     }
   });
   await listen("selection-captured", (event) =>
     runUiAction("Selection speech failed", () => speakText(event.payload))
   );
   await listen("selection-capture-empty", () =>
-    setSpeechState(SPEECH_STATES.ERROR, "No selectable text captured. Try Read clipboard.")
+    setSpeechState(
+      SPEECH_STATES.ERROR,
+      "No selectable text captured. Try Read clipboard."
+    )
   );
-  await listen("shortcut-stop", () => stopPlayback());
+  await listen("shortcut-stop", () => runUiAction("Stop failed", stopPlayback));
   await listen("tray-open", () => window.focus());
   await listen("tray-read-selection", () =>
     runUiAction("Selection speech failed", readSelection)
@@ -702,32 +921,29 @@ async function init() {
   await listen("tray-read-clipboard", () =>
     runUiAction("Clipboard speech failed", readClipboard)
   );
-  await listen("tray-stop", () => stopPlayback());
+  await listen("tray-stop", () => runUiAction("Stop failed", stopPlayback));
 
   try {
     const autostart = await invoke("autostart_status");
     settings.autostart = autostart;
     $("autostart").checked = autostart;
   } catch (error) {
-    console.warn("Could not read autostart status", error);
+    showNonFatalFeatureWarning("autostart", error);
   }
 
   try {
     await startSidecar();
   } catch (error) {
     startupReady = false;
-    setSpeechState(SPEECH_STATES.BACKEND_UNAVAILABLE, error.message || String(error));
+    setSpeechState(
+      SPEECH_STATES.BACKEND_UNAVAILABLE,
+      error.message || String(error)
+    );
     return;
   }
 
-  try {
-    await loadVoiceCatalogs({ offline: true });
-    await configureShortcuts();
-    await applyAutostart();
-  } catch (error) {
-    startupReady = false;
-    setSpeechState(SPEECH_STATES.ENGINE_UNAVAILABLE, error.message || String(error));
-  }
+  await loadVoiceCatalogs({ offline: catalogOfflineSetting(settings) });
+  await configureOptionalDesktopFeatures();
 }
 
 window.addEventListener("beforeunload", () => {

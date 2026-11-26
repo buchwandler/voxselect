@@ -2,7 +2,9 @@ export const PROTOCOL_VERSION = 2;
 export const SERVICE_NAME = "voxselect-readio-service";
 
 export function encodeRequest(id, command, params = {}) {
-  return JSON.stringify({ id, protocol: PROTOCOL_VERSION, command, params }) + "\n";
+  return (
+    JSON.stringify({ id, protocol: PROTOCOL_VERSION, command, params }) + "\n"
+  );
 }
 
 export class JsonlTransport {
@@ -35,7 +37,10 @@ export class JsonlTransport {
     });
     this.readyPromise.catch(() => {});
     this.readyTimer = setTimeout(
-      () => this.fail(new Error(`Readio service was not ready after ${timeoutMs / 1000}s`)),
+      () =>
+        this.fail(
+          new Error(`Readio service was not ready after ${timeoutMs / 1000}s`)
+        ),
       timeoutMs
     );
     return this.readyPromise;
@@ -44,7 +49,9 @@ export class JsonlTransport {
   handleLine(line) {
     let message;
     try {
-      message = JSON.parse(typeof line === "string" ? line.trim() : String(line).trim());
+      message = JSON.parse(
+        typeof line === "string" ? line.trim() : String(line).trim()
+      );
     } catch {
       console.warn("Unparsed sidecar output:", line);
       return;
@@ -60,7 +67,11 @@ export class JsonlTransport {
         message.service !== SERVICE_NAME
       ) {
         this.fail(
-          new Error(`Unsupported sidecar protocol or service: ${JSON.stringify(message)}`)
+          new Error(
+            `Unsupported sidecar protocol or service: ${JSON.stringify(
+              message
+            )}`
+          )
         );
         return;
       }
@@ -74,7 +85,9 @@ export class JsonlTransport {
 
     if (message.protocol !== PROTOCOL_VERSION) {
       const error = new Error(
-        `Sidecar protocol mismatch: expected ${PROTOCOL_VERSION}, received ${message.protocol ?? "none"}`
+        `Sidecar protocol mismatch: expected ${PROTOCOL_VERSION}, received ${
+          message.protocol ?? "none"
+        }`
       );
       if (message.id && this.pending.has(message.id)) {
         this.rejectPending(message.id, error);
@@ -94,7 +107,10 @@ export class JsonlTransport {
     clearTimeout(entry.timer);
     this.pending.delete(message.id);
     if (message.ok === false) {
-      const detail = message.error?.result?.message || message.error?.message || message.error;
+      const detail =
+        message.error?.result?.message ||
+        message.error?.message ||
+        message.error;
       entry.reject(new Error(detail || "Sidecar request failed"));
     } else {
       entry.resolve(message.result ?? message);

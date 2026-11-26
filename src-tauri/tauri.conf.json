@@ -36,12 +36,15 @@
       "icons/icon.ico"
     ],
     "targets": "all",
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    },
     "category": "Utility",
     "shortDescription": "Read selected text aloud locally",
     "longDescription": "VoxSelect reads highlighted or clipboard text aloud through a local Readio speech backend.",
-    "externalBin": [
-      "binaries/voxselect-readio-service"
-    ],
+    "externalBin": ["binaries/voxselect-readio-service"],
     "windows": {
       "bundleVCRuntime": true,
       "webviewInstallMode": {

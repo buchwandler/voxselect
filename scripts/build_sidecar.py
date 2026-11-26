@@ -121,8 +121,12 @@ def write_manifest(
     binary_path: Path,
 ) -> dict[str, Any]:
     constants = service_constants()
-    package_versions = dict(sorted(package_versions.items(), key=lambda item: canonical_name(item[0])))
-    version_by_name = {canonical_name(name): version for name, version in package_versions.items()}
+    package_versions = dict(
+        sorted(package_versions.items(), key=lambda item: canonical_name(item[0]))
+    )
+    version_by_name = {
+        canonical_name(name): version for name, version in package_versions.items()
+    }
     manifest = {
         "schema": "voxselect.sidecar-build.v1",
         "service": {
@@ -175,7 +179,9 @@ def main() -> int:
     extra = args.engine_extra.lower()
     target_name = f"voxselect-readio-service-{target}"
     constraints_path = BINARY_DIR / f"{target_name}-{extra}.constraints.txt"
-    manifest_path = BINARY_DIR / f"{target_name}{'.exe' if os.name == 'nt' else ''}.manifest.json"
+    manifest_path = (
+        BINARY_DIR / f"{target_name}{'.exe' if os.name == 'nt' else ''}.manifest.json"
+    )
     if args.constraints is not None and not args.constraints.is_file():
         raise FileNotFoundError(f"constraints file does not exist: {args.constraints}")
     input_constraints = args.constraints or (
@@ -223,9 +229,7 @@ def main() -> int:
     install = [str(py), "-m", "pip", "install"]
     if input_constraints:
         install.extend(["--constraint", str(input_constraints)])
-    install.extend(
-        [readio_requirement, "pynput>=1.7,<2", "pyinstaller>=6,<7"]
-    )
+    install.extend([readio_requirement, "pynput>=1.7,<2", "pyinstaller>=6,<7"])
     run(*install)
 
     work = ROOT / "build" / "sidecar"
@@ -272,6 +276,10 @@ def main() -> int:
         "audioexport",
         "--collect-all",
         "ssmdconvert",
+        "--collect-all",
+        "numeralform",
+        "--collect-all",
+        "abbr2words",
         *engine_collect_args,
         str(SERVICE),
     ]
